@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Pytest Configured and Operational
-The backend SHALL have Pytest configured in `pyproject.toml` under `[tool.pytest.ini_options]` or a separate `pytest.ini`. Running `pytest` SHALL execute all `*.test.py` files.
+The backend SHALL have Pytest configured in `pyproject.toml` under `[tool.pytest.ini_options]` or a separate `pytest.ini`. Running `pytest` SHALL execute all `test_*.py` files.
 
 ### Requirement: pytest-asyncio Available
 `pytest-asyncio` SHALL be installed and configured so async test functions (`async def test_`) are runnable with the `@pytest.mark.asyncio` decorator.
@@ -12,10 +12,14 @@ The backend SHALL have Pytest configured in `pyproject.toml` under `[tool.pytest
 ### Requirement: Co-located Python Test Files
 Each service module under `backend/service/` SHALL have a co-located `test_*.py` file. Each repository module under `backend/repository/` SHALL have a co-located `test_*.py` file.
 
+> The top-level `backend/tests/` directory exists for shared fixtures and integration tests only; unit tests are co-located with source per this requirement.
+
 ### Requirement: Backend Test Fixtures
 A `backend/tests/conftest.py` SHALL provide shared fixtures:
 - A test database (SQLite in-memory or temporary file)
 - An `AsyncClient` for route integration tests
+
+> `backend/tests/` holds `conftest.py` and integration tests (e.g., `test_health.py`). It is not a location for unit tests; those remain co-located with the module they test.
 
 ### Requirement: First Tests Cover Skeleton
 The initial test suite SHALL include:
@@ -24,8 +28,8 @@ The initial test suite SHALL include:
 
 #### Scenario: pytest runs successfully
 - **WHEN** a developer runs `pytest` in `backend/`
-- **THEN** all `*.test.py` files are discovered and run, and pytest exits with code 0
+- **THEN** all `test_*.py` files are discovered and run, and pytest exits with code 0
 
 #### Scenario: Health endpoint integration test
-- **WHEN** `pytest backend/tests/test_api_routes.py` runs
+- **WHEN** `pytest backend/tests/test_health.py` runs
 - **THEN** there is a test that calls `GET /health` and asserts the response is `{"status": "ok", "backend": "fastapi"}`

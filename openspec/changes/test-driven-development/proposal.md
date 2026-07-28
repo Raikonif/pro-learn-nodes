@@ -6,7 +6,7 @@ The project has no test coverage. As phases add AI providers, branching logic, c
 
 - **Frontend testing setup**: Vitest + React Testing Library + Playwright configured and working in `frontend/`
 - **Backend testing setup**: Pytest + pytest-asyncio + httpx configured and working in `backend/`
-- **TDD workflow conventions**: Every new feature module in both frontend and backend ships with tests in a `*.test.ts` / `*.test.py` file co-located with the source
+- **TDD workflow conventions**: Every new feature module in both frontend and backend ships with tests in a `*.test.ts` / `test_*.py` file co-located with the source
 - **CI enforcement**: GitHub Actions runs frontend and backend test suites on every PR
 - **Test infrastructure in OpenSpec**: `frontend-scream-architecture` and `backend-layered-architecture` specs get test-related requirements
 
@@ -15,7 +15,7 @@ The project has no test coverage. As phases add AI providers, branching logic, c
 ### New Capabilities
 - `frontend-unit-testing`: Vitest + React Testing Library configured and operational in `frontend/`. Co-located `*.test.ts` files for each feature module.
 - `frontend-e2e-testing`: Playwright configured with browser tests covering critical user journeys
-- `backend-unit-testing`: Pytest + pytest-asyncio + httpx configured in `backend/`. Co-located `*.test.py` files for each service and repository
+- `backend-unit-testing`: Pytest + pytest-asyncio + httpx configured in `backend/`. Co-located `test_*.py` files for each service and repository
 - `tdd-workflow-conventions`: Test file naming, placement, and naming conventions enforced across frontend and backend
 
 ### Modified Capabilities
@@ -24,7 +24,7 @@ The project has no test coverage. As phases add AI providers, branching logic, c
 
 ## Impact
 
-- **New files**: `frontend/vitest.config.ts`, `frontend/playwright.config.ts`, `frontend/src/*.test.ts`, `backend/tests/`, `backend/pytest.ini` or `pyproject.toml` test config, `backend/**/*.test.py`
+- **New files**: `frontend/vitest.config.ts`, `frontend/playwright.config.ts`, `frontend/src/*.test.ts`, `backend/tests/`, `backend/pytest.ini` or `pyproject.toml` test config, `backend/**/test_*.py`
 - **Modified files**: `frontend/package.json` (already updated), `backend/pyproject.toml` (already updated)
 - **GitHub Actions**: New `test.yml` workflow running `npm test` and `pytest` on PRs
 - **OpenSpec specs**: `frontend-scream-architecture` and `backend-layered-architecture` specs updated with test requirements

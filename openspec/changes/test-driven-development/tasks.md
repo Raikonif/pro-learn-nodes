@@ -16,7 +16,7 @@
 - [x] 3.1 Create `frontend/playwright.config.ts` — configure headless Chromium, `frontend/e2e/` test dir
 - [x] 3.2 Add `npx playwright install` bootstrap step
 - [x] 3.3 Create `frontend/e2e/app.spec.ts` — tests app launches, backend health check passes
-- [ ] 3.4 Run `npx playwright test` and confirm E2E test passes
+- [x] 3.4 Run `npx playwright test` and confirm E2E test passes
 
 ## 4. Backend Pytest Setup
 
@@ -25,16 +25,16 @@
 - [x] 4.3 Create `backend/tests/` directory with `__init__.py`
 - [x] 4.4 Create `backend/tests/conftest.py` — provides test database fixture and AsyncClient fixture
 - [x] 4.5 Write smoke test: `backend/tests/test_health.py` — `GET /health` returns `{"status": "ok", "backend": "fastapi"}`
-- [ ] 4.6 Run `pytest` and confirm smoke test passes
+- [x] 4.6 Run `pytest` and confirm smoke test passes
 
 ## 5. GitHub Actions CI
 
 - [x] 5.1 Create `.github/workflows/test.yml`
 - [x] 5.2 Frontend job: checkout → npm ci → npm test → npx playwright test
 - [x] 5.3 Backend job: checkout → uv sync --extra test → pytest
-- [ ] 5.4 Verify workflow runs on the current branch (or trigger a test run)
+- [x] 5.4 Verify workflow runs on the current branch (or trigger a test run)
 
 ## 6. TDD Workflow Documentation
 
-- [ ] 6.1 Document test naming and co-location conventions in `frontend/README.md` and `backend/README.md`
-- [ ] 6.2 Verify both suites run in CI and both pass
+- [x] 6.1 Document test naming and co-location conventions in `frontend/README.md` and `backend/README.md`
+- [x] 6.2 Verify both suites run in CI and both pass

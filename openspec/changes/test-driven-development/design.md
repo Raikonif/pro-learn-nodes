@@ -27,7 +27,7 @@ Key constraints:
 
 ### Decision 1: Co-located Test Files
 
-**Choice:** `*.test.ts` and `*.test.py` files live in the same directory as the source they test, not in a separate `tests/` top-level directory.
+**Choice:** `*.test.ts` and `test_*.py` files live in the same directory as the source they test, not in a separate `tests/` top-level directory.
 
 ```
 frontend/src/features/graph-navigation/
@@ -50,12 +50,20 @@ backend/service/
 
 **Rationale:** Routes are thin — they parse requests and call services. The business logic lives in services. Testing services directly gives better failure localization. Route-level integration tests via httpx cover the request/response contract.
 
+**Layout:** Per Decision 1, **unit tests are co-located** with the source module. The top-level `backend/tests/` directory exists for **shared fixtures and integration tests only** (httpx-driven route tests, `conftest.py`). It is not a general "all backend tests" directory.
+
 ```
+backend/service/
+├── node_service.py
+└── test_node_service.py        ← unit test, co-located (Decision 1)
+
+backend/repository/
+├── node_repository.py
+└── test_node_repository.py     ← unit test, co-located (Decision 1)
+
 backend/tests/
 ├── conftest.py              ← shared fixtures
-├── test_node_service.py     ← unit test
-├── test_chat_service.py     ← unit test
-└── test_api_routes.py      ← integration test (httpx)
+└── test_health.py           ← integration test (httpx)
 ```
 
 **Alternative considered:** Testing routes as the primary backend test strategy. Rejected — route handlers change often (e.g., adding a query param), and route tests don't verify business logic correctness.
