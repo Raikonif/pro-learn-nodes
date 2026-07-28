@@ -1,0 +1,15 @@
+{
+  "name": "learn-nodes-personalized",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "backend:dev": "cd backend && uv run uvicorn main:app --port 8000 --reload",
+    "backend": "cd backend && uv run uvicorn main:app --port 8000"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}
