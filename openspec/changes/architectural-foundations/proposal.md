@@ -1,15 +1,19 @@
 ## Why
 
-The codebase currently lacks structural convention. Frontend and backend live in a single `src-tauri/` tree with no clear separation of concerns. As the project grows to 15 phases with graph navigation, AI providers, skills, MCP, and practice systems, organizing code by "what it does" rather than "what technology it uses" becomes critical for navigability and long-term maintainability.
+The repo-root split between `frontend/` and `backend/` already exists, but neither side has an *internal* structural convention. `frontend/src/` holds `App.tsx` and `main.tsx` flat at its root; `backend/` holds a single `main.py` with no layer boundaries. As the project grows to 15 phases with graph navigation, AI providers, skills, MCP, and practice systems, organizing code by "what it does" rather than "what technology it uses" becomes critical for navigability and long-term maintainability.
 
-Adopting scream architecture for the frontend and layered architecture for the backend establishes clear contracts between layers before feature development begins.
+Adopting scream architecture for the frontend and layered architecture for the backend establishes clear contracts between layers before feature development begins — while the codebase is still small enough that the reorganization is cheap.
 
 ## What Changes
 
-- **Frontend**: Migrate from a technology-based folder structure to a **scream architecture** (feature-first organization under `frontend/src/features/`)
-- **Backend**: Migrate from a flat structure to a **layered architecture** (`api/`, `service/`, `repository/`, `models/`, `core/` under `backend/`)
-- **Roadmap**: Insert **Phase 0** as a dedicated project-separation milestone before Phase 1, establishing the clean `frontend/` and `backend/` directory split
-- **OpenSpec docs**: Update `tech-stack.md` to reflect the architectural patterns; update `roadmap.md` phases; update `mission.md` if scope language needs clarification
+- **Frontend**: Introduce a **scream architecture** inside `frontend/src/` — feature-first organization under `features/`, with `shared/` for cross-cutting code and `app/` for the app shell. Existing `App.tsx` moves into `app/`.
+- **Backend**: Introduce a **layered architecture** inside `backend/` — `api/`, `service/`, `repository/`, `models/`, `core/`. Existing `main.py` is rewired to mount the `api/` router.
+- **Tests stay green**: The `test-driven-development` change is already complete. Moving `App.tsx` and `main.py` breaks `frontend/src/App.test.tsx` and `backend/tests/test_health.py` unless their imports are updated in the same step.
+
+**Already landed — not part of this change:**
+- `frontend/` and `backend/` exist as repo-root siblings with their own `package.json` / `pyproject.toml`
+- `openspec/tech-stack.md` documents both architecture patterns
+- `openspec/roadmap.md` has Phase 0 — Project Separation
 
 ## Capabilities
 
@@ -23,7 +27,9 @@ Adopting scream architecture for the frontend and layered architecture for the b
 
 ## Impact
 
-- **Directories created**: `frontend/`, `backend/`, `frontend/src/features/`, `frontend/src/shared/`, `frontend/src/app/`, `backend/api/`, `backend/service/`, `backend/repository/`, `backend/models/`, `backend/core/`
-- **Directory affected**: `src-tauri/` is restructured — `src-tauri/src/` becomes `frontend/src/`, preserving all existing source
-- **Build impact**: Frontend build (`npm run dev`, `npm run tauri dev`) runs from `frontend/`; backend dev server (`uvicorn`) runs from `backend/`
-- **OpenSpec files updated**: `openspec/tech-stack.md`, `openspec/roadmap.md`, `openspec/mission.md`
+- **Directories created**: `frontend/src/features/`, `frontend/src/shared/`, `frontend/src/app/`, `backend/api/`, `backend/service/`, `backend/repository/`, `backend/models/`, `backend/core/`
+- **Files moved**: `frontend/src/App.tsx` → `frontend/src/app/App.tsx`; `backend/main.py` retained as the ASGI entry point but reduced to app construction + router mounting
+- **Files that must be updated in lockstep**: `frontend/src/main.tsx` and `frontend/src/App.test.tsx` (both import `./App`); `backend/tests/test_health.py` and `backend/tests/conftest.py` (both import from `main`)
+- **`src-tauri/` is untouched** — it already contains only Tauri config and Rust sources (`src-tauri/src/lib.rs`, `src-tauri/src/main.rs`)
+- **Build impact**: none to the run commands. Frontend still runs via `npm run dev` in `frontend/`; backend still runs via `cd backend && uv run uvicorn main:app --port 8000 --reload` (wired as `npm run backend:dev` at the repo root)
+- **OpenSpec files updated**: `openspec/roadmap.md` — correct the Phase 0 backend run command, which currently contradicts itself (bullet says repo root, Demo says `backend/`)

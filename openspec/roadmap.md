@@ -8,13 +8,13 @@
 *Goal: Clean structural separation between frontend and backend before any feature code is written.*
 
 - `frontend/` created at repo root — React/Vite app, runs via `npm run dev`
-- `backend/` created at repo root — FastAPI app, runs via `uvicorn backend.main:app --reload`
+- `backend/` created at repo root — FastAPI app (uv-managed), runs via `cd backend && uv run uvicorn main:app --port 8000 --reload`, wired as `npm run backend:dev` at the repo root
 - `frontend/src/` is the React source root; `backend/` is the FastAPI source root
 - `frontend/` and `backend/` build and run independently — neither depends on the other being present
-- No feature code — only the empty skeleton directories (`features/`, `shared/`, `app/` for frontend; `api/`, `service/`, `repository/`, `models/`, `core/` for backend)
+- Skeleton directories only (`features/`, `shared/`, `app/` for frontend; `api/`, `service/`, `repository/`, `models/`, `core/` for backend). The sole live endpoint is `/health`, which moves from `main.py` into `api/routes/health.py` to prove the API layer is wired.
 - `src-tauri/` contains only Tauri/Rust configuration — no React source mixed in
 
-**Demo:** `npm run dev` in `frontend/` and `uvicorn backend.main:app` in `backend/` both start successfully and independently.
+**Demo:** `npm run dev` in `frontend/` and `npm run backend:dev` from the repo root both start successfully and independently.
 
 ---
 
