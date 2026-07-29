@@ -6,6 +6,28 @@ on:
     branches: [main]
 
 jobs:
+  backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra test
+        working-directory: backend
+
+      - name: Run tests
+        run: uv run pytest
+        working-directory: backend
+
   frontend:
     name: Frontend Tests
     runs-on: ubuntu-latest
@@ -31,28 +53,38 @@ jobs:
         run: npx playwright install chromium
         working-directory: frontend
 
-      - name: Run E2E tests
-        run: npx playwright test
-        working-directory: frontend
-
-  backend:
-    name: Backend Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python
+      - name: Setup Python (for backend service)
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Install uv
+      - name: Install uv (for backend service)
         uses: astral-sh/setup-uv@v4
 
-      - name: Install dependencies
+      - name: Install backend dependencies (for E2E)
         run: uv sync --extra test
         working-directory: backend
 
-      - name: Run tests
-        run: pytest
-        working-directory: backend
+      - name: Start backend
+        run: |
+          cd backend
+          nohup uv run uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/backend.log 2>&1 &
+          echo $! > /tmp/backend.pid
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+              echo "backend ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "backend failed to start in 30s"
+          cat /tmp/backend.log
+          exit 1
+
+      - name: Run E2E tests
+        run: npx playwright test
+        working-directory: frontend
+
+      - name: Stop backend
+        if: always()
+        run: kill $(cat /tmp/backend.pid) 2>/dev/null || true

@@ -86,23 +86,28 @@ backend/tests/
 
 **Rationale:** Keeping both test suites in one workflow ensures they stay in sync with the PR that introduces them.
 
+The actual workflow lives at `.github/workflows/test.yml`. Key implementation notes:
+- Backend: `uv sync --extra test` then `uv run pytest` (pytest is in the venv, not on PATH).
+- Frontend E2E: the spec at `frontend/e2e/app.spec.ts` calls `GET http://localhost:8000/health` from the browser, so the frontend job spins up its own backend in the background (`uv run uvicorn main:app`) and waits for `/health` to respond before running Playwright.
+- The two jobs run in parallel; neither depends on the other.
+
 ```
 name: Test
-on: [pull_request]
+on: [pull_request, push:branches:main]
 jobs:
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: npm test
-      - run: npx playwright test
   backend:
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: uv sync --extra test
-      - run: pytest
+      - run: uv sync --extra test      # working-directory: backend
+      - run: uv run pytest             # working-directory: backend
+  frontend:
+    steps:
+      - run: npm ci                    # working-directory: frontend
+      - run: npm test                  # unit, working-directory: frontend
+      - run: npx playwright install chromium
+      - run: uv sync --extra test      # for the E2E backend service
+      - run: (start uvicorn in background, wait for /health)
+      - run: npx playwright test
+      - run: (stop uvicorn, if: always())
 ```
 
 ## Risks / Trade-offs
