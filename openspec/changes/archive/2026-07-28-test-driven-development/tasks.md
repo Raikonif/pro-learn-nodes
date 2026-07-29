@@ -23,7 +23,7 @@
 - [x] 4.1 Verify `pytest`, `pytest-asyncio`, `httpx` are installed via `uv sync --extra test`
 - [x] 4.2 Configure `pytest.ini` or `[tool.pytest.ini_options]` in `backend/pyproject.toml`
 - [x] 4.3 Create `backend/tests/` directory with `__init__.py`
-- [x] 4.4 Create `backend/tests/conftest.py` — provides test database fixture and AsyncClient fixture
+- [x] 4.4 Create `backend/tests/conftest.py` — provides the AsyncClient fixture bound to the FastAPI app (test-database fixture deferred to the data-model phase, which introduces the database)
 - [x] 4.5 Write smoke test: `backend/tests/test_health.py` — `GET /health` returns `{"status": "ok", "backend": "fastapi"}`
 - [x] 4.6 Run `pytest` and confirm smoke test passes
 

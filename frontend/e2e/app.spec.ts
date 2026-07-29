@@ -9,8 +9,10 @@ test.describe('App', () => {
 
   test('backend health check passes', async ({ page }) => {
     await page.goto('/')
-    // Wait for backend status to update from "checking..."
+    // Assert the *connected* state specifically. Asserting merely that the text
+    // left "checking..." would also pass when the backend is down, since a
+    // failed request renders "unavailable".
     const backendMessage = page.locator('#backend-message')
-    await expect(backendMessage).not.toHaveText('checking...', { timeout: 10000 })
+    await expect(backendMessage).toHaveText('connected', { timeout: 10000 })
   })
 })
