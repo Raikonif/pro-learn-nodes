@@ -4,8 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Merge gate: unit + integration suites. Fast, no browser, no live servers.
+  # ---------------------------------------------------------------------------
   backend:
     name: Backend Tests
     runs-on: ubuntu-latest
@@ -49,42 +53,56 @@ jobs:
         run: npm test
         working-directory: frontend
 
-      - name: Install Playwright browsers
-        run: npx playwright install chromium
-        working-directory: frontend
+  # ---------------------------------------------------------------------------
+  # E2E runs separately from the merge gate, per the tdd-workflow-conventions
+  # spec. Opt in per-PR with the `run-e2e` label, or trigger manually.
+  # Playwright's webServer config starts both the frontend and the backend.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E Tests
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event_name == 'push'
+      || contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Setup Python (for backend service)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Install uv (for backend service)
+      - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Install backend dependencies (for E2E)
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install backend dependencies
         run: uv sync --extra test
         working-directory: backend
 
-      - name: Start backend
-        run: |
-          cd backend
-          nohup uv run uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/backend.log 2>&1 &
-          echo $! > /tmp/backend.pid
-          for i in {1..30}; do
-            if curl -sf http://127.0.0.1:8000/health > /dev/null; then
-              echo "backend ready"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "backend failed to start in 30s"
-          cat /tmp/backend.log
-          exit 1
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
 
       - name: Run E2E tests
         run: npx playwright test
         working-directory: frontend
 
-      - name: Stop backend
+      - name: Upload Playwright report
         if: always()
-        run: kill $(cat /tmp/backend.pid) 2>/dev/null || true
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

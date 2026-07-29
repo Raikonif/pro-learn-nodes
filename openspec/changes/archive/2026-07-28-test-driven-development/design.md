@@ -5,7 +5,7 @@ The project is starting Phase 1 with no test infrastructure in place. `frontend/
 Key constraints:
 - Frontend uses React 19 + TypeScript + Vite (already set up)
 - Backend uses FastAPI + SQLModel + Python 3.13+
-- Both frontends use scream and layered architectures respectively — tests must respect those boundaries
+- Frontend and backend use scream and layered architectures respectively — tests must respect those boundaries
 - GitHub Actions CI is already referenced in `tech-stack.md`
 
 ## Goals / Non-Goals
@@ -13,7 +13,7 @@ Key constraints:
 **Goals:**
 - Both test suites (`npm test` and `pytest`) run and pass from day one
 - Test files are co-located with the source they test (`features/graph-navigation/graph-navigation.test.ts`)
-- E2E Playwright tests cover at least the critical path: app launch, backend health check, graph canvas render
+- E2E Playwright tests cover the critical path available at this phase: app launch and backend health check. Graph canvas rendering is deferred to the phase that introduces the graph view.
 - Backend tests cover service and repository layers (not API routes directly — those are integration tested via httpx)
 - TDD conventions are documented so future phases follow them consistently
 
@@ -123,7 +123,7 @@ jobs:
 
 1. **Install dependencies** — `npm install` in `frontend/`, `uv sync` in `backend/` (already done via package.json/pyproject.toml updates)
 2. **Create config files** — `vitest.config.ts`, `playwright.config.ts`, `pytest.ini`
-3. **Create `conftest.py`** — backend test fixtures (test database, test client)
+3. **Create `conftest.py`** — backend test fixtures. An `AsyncClient` fixture bound to the FastAPI app. No test-database fixture: no database exists yet, so it is deferred to the data-model phase.
 4. **Write first passing tests** — a smoke test for `backend/main.py`'s `/health` route and a smoke test for `frontend/src/App.tsx`
 5. **Add GitHub Actions workflow** — `.github/workflows/test.yml`
 6. **Verify CI passes** — both suites green on the first merged PR

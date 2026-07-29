@@ -30,11 +30,19 @@ Three tiers, each in its own directory and tool:
 - **Location:** `e2e/*.spec.ts`. Lives outside `src/` so Playwright's config doesn't try to bundle it.
 - **Naming:** `feature.spec.ts`.
 - **Browser:** Chromium only by default (`playwright.config.ts`). Run `npm run playwright:install` once per machine.
-- **Dev server:** Playwright boots `npm run dev` automatically (`webServer` in `playwright.config.ts`). Keep the backend running separately on `:8000` for specs that touch `/health`.
+- **Servers:** Playwright boots both the Vite dev server and the FastAPI backend automatically (the `webServer` array in `playwright.config.ts`), so no manual setup is needed. Locally it reuses whatever is already listening; in CI it starts its own.
 - **Run:** `npx playwright test`.
 
 ### CI — GitHub Actions
-- `.github/workflows/test.yml` runs both `npm test` and `npx playwright test` on every PR.
+`.github/workflows/test.yml` has three jobs:
+
+| Job | Runs | When |
+| --- | --- | --- |
+| `backend` | `uv run pytest` | Every PR — **gates merge** |
+| `frontend` | `npm test` | Every PR — **gates merge** |
+| `e2e` | `npx playwright test` | Only on PRs labelled `run-e2e`, on pushes to `main`, or via manual dispatch — **does not gate merge** |
+
+E2E is deliberately kept off the per-PR merge gate so the fast suites stay the feedback loop. Add the `run-e2e` label to a PR when a change warrants browser-level verification.
 
 ## Conventions
 

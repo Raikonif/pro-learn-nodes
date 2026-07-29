@@ -17,9 +17,22 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:1420',
-    reuseExistingServer: !process.env.CI,
-  },
+  // Both servers are managed here so `npx playwright test` is self-contained:
+  // the E2E suite asserts the browser can actually reach the API, so a backend
+  // must be running for the run to be meaningful.
+  webServer: [
+    {
+      command: 'npm run dev',
+      url: 'http://localhost:1420',
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: 'uv run uvicorn main:app --host 127.0.0.1 --port 8000',
+      cwd: '../backend',
+      url: 'http://127.0.0.1:8000/health',
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  ],
 })
