@@ -101,7 +101,7 @@ SQLite single-file database, local-first. Node bodies stored as Markdown with YA
 | Requirement | Notes |
 |---|---|
 | **macOS** | Primary target. Linux/Windows are possible via Tauri but untested. |
-| **Node.js 20+** and npm | CI pins Node 20. |
+| **Node.js 20+** and [pnpm](https://pnpm.io/) | CI pins Node 20 + pnpm 11. Install with `corepack enable pnpm` or `npm i -g pnpm`. |
 | **Python 3.13+** | Pinned in `backend/.python-version`. |
 | **[uv](https://docs.astral.sh/uv/)** | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | **Rust 1.77.2+** | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
@@ -125,14 +125,20 @@ git clone <your-fork-or-repo-url> learn-nodes-personalized
 cd learn-nodes-personalized
 
 # 1. Root tooling (Tauri CLI)
-npm install
+pnpm install
 
 # 2. Frontend dependencies
-cd frontend && npm install && cd ..
+cd frontend && pnpm install && cd ..
 
 # 3. Backend dependencies (creates backend/.venv from uv.lock)
 cd backend && uv sync --extra test && cd ..
 ```
+
+> Why pnpm instead of npm? Stricter `node_modules` layout (no phantom
+> dependencies), content-addressable store (faster, integrity-checked),
+> and an off-by-default lifecycle-script policy (`ignore-scripts=true` in
+> `.npmrc`) that closes the post-install supply-chain hole npm leaves open.
+> See [`.npmrc`](.npmrc).
 
 Rust dependencies are fetched automatically on the first `tauri dev` / `tauri build` (the initial compile takes a few minutes).
 
@@ -145,7 +151,7 @@ The backend and the Tauri window are separate processes during development. Run 
 **Terminal 1 — backend**
 
 ```bash
-npm run backend:dev          # uvicorn on http://localhost:8000, with --reload
+pnpm run backend:dev        # uvicorn on http://localhost:8000, with --reload
 ```
 
 Verify: `curl http://localhost:8000/health` → `{"status":"ok","backend":"fastapi"}`
@@ -153,12 +159,12 @@ Verify: `curl http://localhost:8000/health` → `{"status":"ok","backend":"fasta
 **Terminal 2 — desktop app**
 
 ```bash
-cd frontend && npm run dev   # Vite dev server on http://localhost:1420
+cd frontend && pnpm run dev   # Vite dev server on http://localhost:1420
 ```
 
 ```bash
 # then, from the repo root, in a third terminal:
-npx tauri dev                # opens the "Learn Nodes" window (1200×800)
+pnpm tauri dev                # opens the "Learn Nodes" window (1200×800)
 ```
 
 ### Browser-only frontend
@@ -166,15 +172,15 @@ npx tauri dev                # opens the "Learn Nodes" window (1200×800)
 You don't need the Tauri window to iterate on UI:
 
 ```bash
-npm run backend:dev                 # terminal 1
-cd frontend && npm run dev          # terminal 2 → open http://localhost:1420
+pnpm run backend:dev               # terminal 1
+cd frontend && pnpm run dev        # terminal 2 → open http://localhost:1420
 ```
 
 ### Production build
 
 ```bash
-cd frontend && npm run build && cd ..   # type-check + bundle into frontend/dist
-npx tauri build                          # produces .app / .dmg under src-tauri/target/release/bundle/
+cd frontend && pnpm run build && cd ..   # type-check + bundle into frontend/dist
+pnpm tauri build                          # produces .app / .dmg under src-tauri/target/release/bundle/
 ```
 
 > Bundling FastAPI as a Tauri sidecar is not wired up yet — a built app still expects the backend on `localhost:8000`. Sidecar packaging, code signing, and notarization land in Phase 14.
@@ -235,23 +241,23 @@ Target layouts as features land (see [`openspec/tech-stack.md`](openspec/tech-st
 
 | Script | What it does |
 |---|---|
-| `npm run backend:dev` | FastAPI on port 8000 with auto-reload |
-| `npm run backend` | FastAPI on port 8000, no reload |
-| `npm run tauri <cmd>` | Passthrough to the Tauri CLI (`dev`, `build`, `info`, …) |
+| `pnpm run backend:dev` | FastAPI on port 8000 with auto-reload |
+| `pnpm run backend` | FastAPI on port 8000, no reload |
+| `pnpm run tauri <cmd>` | Passthrough to the Tauri CLI (`dev`, `build`, `info`, …) |
 
 ### Frontend (`cd frontend`)
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Vite dev server on `http://localhost:1420` |
-| `npm run build` | `tsc` type-check, then production bundle → `dist/` |
-| `npm run preview` | Serve the built bundle |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | ESLint — script is declared, but ESLint isn't installed or configured yet |
-| `npm test` | Vitest, single run |
-| `npm run test:watch` | Vitest in watch mode |
-| `npm run playwright:install` | Install the Chromium browser for E2E |
-| `npx playwright test` | Run E2E specs (auto-starts the Vite server) |
+| `pnpm run dev` | Vite dev server on `http://localhost:1420` |
+| `pnpm run build` | `tsc` type-check, then production bundle → `dist/` |
+| `pnpm run preview` | Serve the built bundle |
+| `pnpm run typecheck` | `tsc --noEmit` |
+| `pnpm run lint` | ESLint — script is declared, but ESLint isn't installed or configured yet |
+| `pnpm test` | Vitest, single run |
+| `pnpm run test:watch` | Vitest in watch mode |
+| `pnpm run playwright:install` | Install the Chromium browser for E2E |
+| `pnpm exec playwright test` | Run E2E specs (auto-starts the Vite server) |
 
 ### Backend (`cd backend`)
 
@@ -267,11 +273,11 @@ Target layouts as features land (see [`openspec/tech-stack.md`](openspec/tech-st
 
 | Layer | Tool | Location | Command |
 |---|---|---|---|
-| Frontend unit / component | Vitest + Testing Library (jsdom) | `frontend/src/**/*.test.tsx` | `cd frontend && npm test` |
-| Frontend end-to-end | Playwright (Chromium) | `frontend/e2e/` | `cd frontend && npx playwright test` |
+| Frontend unit / component | Vitest + Testing Library (jsdom) | `frontend/src/**/*.test.tsx` | `cd frontend && pnpm test` |
+| Frontend end-to-end | Playwright (Chromium) | `frontend/e2e/` | `cd frontend && pnpm exec playwright test` |
 | Backend | pytest (asyncio auto mode, httpx) | `backend/tests/` | `cd backend && uv run pytest` |
 
-E2E tests boot the Vite dev server automatically. The backend health-check spec expects `npm run backend:dev` to be running.
+E2E tests boot the Vite dev server automatically. The backend health-check spec expects `pnpm run backend:dev` to be running.
 
 **CI** ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs on every pull request and every push to `main`, with two parallel jobs: frontend (unit + E2E) and backend (pytest).
 
@@ -322,13 +328,13 @@ lsof -ti:1420 | xargs kill    # Vite
 lsof -ti:8000 | xargs kill    # FastAPI
 ```
 
-**`npm run dev` / `npm run tauri dev` from the repo root loops or hangs**
+**`pnpm run dev` / `pnpm run tauri dev` from the repo root loops or hangs**
 
-`src-tauri/tauri.conf.json` sets `beforeDevCommand: "npm run dev"`, which Tauri runs from the repo root — where `dev` is itself `tauri dev`. Start the Vite server yourself (`cd frontend && npm run dev`) and then run `npx tauri dev`, or pin the working directory in the config:
+`src-tauri/tauri.conf.json` pins `beforeDevCommand.cwd` and `beforeBuildCommand.cwd` to `frontend/`, so this should no longer happen — but if you fork and remove those, Tauri runs the script from the repo root where `dev` is itself `tauri dev`. Start the Vite server yourself (`cd frontend && pnpm run dev`) and then run `pnpm tauri dev`, or restore the cwd pinning:
 
 ```jsonc
-"beforeDevCommand": { "script": "npm run dev", "cwd": "frontend" },
-"beforeBuildCommand": { "script": "npm run build", "cwd": "frontend" }
+"beforeDevCommand": { "script": "pnpm run dev", "cwd": "../frontend" },
+"beforeBuildCommand": { "script": "VITE_API_MODE=unix pnpm run build", "cwd": "../frontend" }
 ```
 
 **Backend status shows "checking..." forever**

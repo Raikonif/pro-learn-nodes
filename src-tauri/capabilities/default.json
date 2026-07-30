@@ -8,6 +8,20 @@
   "permissions": [
     "core:default",
     "shell:allow-spawn",
-    "shell:allow-stdin-write"
+    "shell:allow-stdin-write",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "learn-nodes-backend",
+          "sidecar": true,
+          "args": [
+            "--uds",
+            "--host",
+            "--port"
+          ]
+        }
+      ]
+    }
   ]
 }

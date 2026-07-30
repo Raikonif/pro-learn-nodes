@@ -17,12 +17,12 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  // Both servers are managed here so `npx playwright test` is self-contained:
+  // Both servers are managed here so `pnpm exec playwright test` is self-contained:
   // the E2E suite asserts the browser can actually reach the API, so a backend
   // must be running for the run to be meaningful.
   webServer: [
     {
-      command: 'npm run dev',
+      command: 'pnpm run dev',
       url: 'http://localhost:1420',
       reuseExistingServer: !process.env.CI,
     },

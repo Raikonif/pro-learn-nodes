@@ -6,8 +6,14 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": {
+      "script": "pnpm run dev",
+      "cwd": "../frontend"
+    },
+    "beforeBuildCommand": {
+      "script": "VITE_API_MODE=unix pnpm run build",
+      "cwd": "../frontend"
+    }
   },
   "app": {
     "windows": [
@@ -32,6 +38,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/learn-nodes-backend"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
