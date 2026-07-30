@@ -1,38 +1,11 @@
-import { useEffect, useState } from 'react'
+import Placeholder from './Placeholder'
 
+/**
+ * Phase 1 app shell. The entire UI for this phase is the placeholder; a
+ * router lands in Phase 3 when there are multiple screens to navigate.
+ */
 function App() {
-  const [backendStatus, setBackendStatus] = useState<'ok' | 'error' | 'checking'>('checking')
-
-  useEffect(() => {
-    fetch('http://localhost:8000/health')
-      .then(res => res.ok ? setBackendStatus('ok') : setBackendStatus('error'))
-      .catch(() => setBackendStatus('error'))
-  }, [])
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Learn Nodes</h1>
-        <p className="text-gray-500 text-sm">Phase 1 — Project Skeleton</p>
-        <div className="mt-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
-          <p className="text-gray-700 text-sm">
-            Backend status:{' '}
-            <span
-              id="backend-status"
-              className={`inline-block w-2 h-2 rounded-full align-middle mr-1 ${
-                backendStatus === 'ok' ? 'bg-green-500' :
-                backendStatus === 'error' ? 'bg-red-500' : 'bg-gray-400'
-              }`}
-            />
-            <span id="backend-message">
-              {backendStatus === 'ok' ? 'connected' :
-               backendStatus === 'error' ? 'unavailable' : 'checking...'}
-            </span>
-          </p>
-        </div>
-      </div>
-    </div>
-  )
+  return <Placeholder />
 }
 
 export default App
