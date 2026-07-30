@@ -1,0 +1,11 @@
+{
+    "schema_version": 2,
+    "commit": "735ed9d56c370f0990ae0191490252f6262635a2",
+    "indexed_at": "2026-07-30T10:23:09Z",
+    "project": "learn-nodes-personalized",
+    "nodes": 1536,
+    "edges": 1668,
+    "original_size": 2359296,
+    "compressed_size": 231998,
+    "compression_level": 9
+}
