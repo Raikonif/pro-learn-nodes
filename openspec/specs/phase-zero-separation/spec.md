@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the repository boundaries and independent run commands for the frontend, backend, Tauri shell, and OpenSpec artifacts during the foundational phase.
-
 ## Requirements
-
 ### Requirement: Frontend Directory Is Repo Root Sibling
 The `frontend/` directory SHALL exist as a sibling to `backend/`, `src-tauri/`, and `openspec/` at the repository root. All React/Vite source code SHALL live under `frontend/src/`.
 
@@ -35,15 +33,19 @@ The frontend SHALL be runnable via `npm run dev` from within `frontend/` without
 - **THEN** the Vite dev server starts on localhost with hot reload working
 
 ### Requirement: Backend Runs Independently
-The backend SHALL be runnable via `uv run uvicorn main:app --port 8000 --reload` from within `backend/` without any code from `frontend/` present. The `backend/` directory SHALL have its own `pyproject.toml` with all Python dependencies declared. The repo-root `package.json` SHALL expose this as `npm run backend:dev`.
+The backend SHALL be runnable via `uv run uvicorn main:app --port <port> --reload` from within `backend/` without any code from `frontend/` present, where `<port>` defaults to the allocated development backend port. The `backend/` directory SHALL have its own `pyproject.toml` with all Python dependencies declared. The repo-root `package.json` SHALL expose this as `pnpm run backend:dev`, which SHALL resolve the port through allocation rather than hardcoding it.
 
 #### Scenario: Developer runs backend dev server
-- **WHEN** a developer runs `uv run uvicorn main:app --port 8000 --reload` from within `backend/`
-- **THEN** the FastAPI server starts and responds to `/health` at port 8000
+- **WHEN** a developer runs `uv run uvicorn main:app --port 8009 --reload` from within `backend/`
+- **THEN** the FastAPI server starts and responds to `/health` on that port
 
 #### Scenario: Repo-root convenience script
-- **WHEN** a developer runs `npm run backend:dev` from the repository root
-- **THEN** the same server starts, because the script changes into `backend/` first
+- **WHEN** a developer runs `pnpm run backend:dev` from the repository root
+- **THEN** the same server starts on the allocated backend port, because the script changes into `backend/` first and passes the allocated port through
+
+#### Scenario: Default backend port is occupied
+- **WHEN** a developer runs `pnpm run backend:dev` while another process holds the default backend port
+- **THEN** the server starts on the next available port and reports which port it chose, rather than failing to bind or attaching to the other process
 
 ### Requirement: Skeleton Only, No New Feature Code
 This change SHALL create only directory structure, configuration files, and the relocation of code that already exists. No new feature-specific behavior SHALL be implemented. Newly created feature and layer directories SHALL contain only an `index.ts` or `__init__.py` file that exports nothing.
@@ -76,3 +78,14 @@ No TypeScript file under `frontend/` SHALL import from `backend/`, and no Python
 #### Scenario: Reading the roadmap
 - **WHEN** a developer reads Phase 0 in `openspec/roadmap.md` and copies the backend command
 - **THEN** the command works as written, and the bullet list and Demo line do not disagree
+
+### Requirement: Tauri Dev Is The Canonical End-To-End Run Command
+Once Phase 1 lands, `npm run tauri dev` run from the repository root SHALL be the canonical command for opening the full application end-to-end (Tauri window + React frontend + FastAPI backend reachable from the window). The standalone helpers `npm run dev` in `frontend/` and `npm run backend:dev` at the repo root SHALL remain valid for solo frontend or solo backend work, but SHALL NOT be the recommended command when both halves need to talk to each other.
+
+#### Scenario: Tauri dev starts the full app
+- **WHEN** a developer runs `npm run tauri dev` from the repository root
+- **THEN** a Tauri window opens and the React frontend reaches the FastAPI backend without any additional commands
+
+#### Scenario: Standalone scripts still work for solo work
+- **WHEN** a developer runs `npm run dev` in `frontend/` or `npm run backend:dev` at the repo root
+- **THEN** that half of the app starts in isolation, exactly as before Phase 1

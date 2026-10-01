@@ -36,8 +36,8 @@ Built as a [Tauri 2](https://v2.tauri.app/) desktop app: React frontend, FastAPI
 │  ┌────────────────────┐        ┌──────────────────────┐  │
 │  │  Tauri App         │  HTTP  │  FastAPI Backend     │  │
 │  │  (Rust + WebView)  │───────▶│  (uv-managed)        │  │
-│  │  React + Vite      │        │  localhost:8000      │  │
-│  │  localhost:1420    │        │                      │  │
+│  │  React + Vite      │        │  localhost:8009      │  │
+│  │  localhost:5177    │        │                      │  │
 │  └────────────────────┘        └──────────┬───────────┘  │
 │                                           │              │
 │                                     ┌─────▼─────┐        │
@@ -47,7 +47,7 @@ Built as a [Tauri 2](https://v2.tauri.app/) desktop app: React frontend, FastAPI
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **Dev:** Vite proxies `/api/*` → `http://localhost:8000`; the FastAPI process runs standalone.
+- **Dev:** Vite proxies `/api/*` → `http://localhost:8009`; the FastAPI process runs standalone.
 - **Production (planned):** FastAPI ships as a Tauri sidecar binary spawned by the Rust host, communicating over a Unix socket.
 
 ---
@@ -67,7 +67,7 @@ Built as a [Tauri 2](https://v2.tauri.app/) desktop app: React frontend, FastAPI
 |---|---|---|
 | **React** | `19` | UI |
 | **TypeScript** | `5.7` (strict) | Types |
-| **Vite** | `6` | Bundler + dev server (port `1420`) |
+| **Vite** | `6` | Bundler + dev server (port `5177`) |
 | **Tailwind CSS** | `3.4` | Styling |
 | **Zod** | `3` | Runtime schema validation for API payloads and forms |
 | **Vitest** + **Testing Library** | `3` / `16` | Unit + component tests |
@@ -151,15 +151,15 @@ The backend and the Tauri window are separate processes during development. Run 
 **Terminal 1 — backend**
 
 ```bash
-pnpm run backend:dev        # uvicorn on http://localhost:8000, with --reload
+pnpm run backend:dev        # uvicorn on http://localhost:8009, with --reload
 ```
 
-Verify: `curl http://localhost:8000/health` → `{"status":"ok","backend":"fastapi"}`
+Verify: `curl http://localhost:8009/health` → `{"status":"ok","backend":"fastapi"}`
 
 **Terminal 2 — desktop app**
 
 ```bash
-cd frontend && pnpm run dev   # Vite dev server on http://localhost:1420
+cd frontend && pnpm run dev   # Vite dev server on http://localhost:5177
 ```
 
 ```bash
@@ -173,7 +173,7 @@ You don't need the Tauri window to iterate on UI:
 
 ```bash
 pnpm run backend:dev               # terminal 1
-cd frontend && pnpm run dev        # terminal 2 → open http://localhost:1420
+cd frontend && pnpm run dev        # terminal 2 → open http://localhost:5177
 ```
 
 ### Production build
@@ -183,7 +183,7 @@ cd frontend && pnpm run build && cd ..   # type-check + bundle into frontend/dis
 pnpm tauri build                          # produces .app / .dmg under src-tauri/target/release/bundle/
 ```
 
-> Bundling FastAPI as a Tauri sidecar is not wired up yet — a built app still expects the backend on `localhost:8000`. Sidecar packaging, code signing, and notarization land in Phase 14.
+> Bundling FastAPI as a Tauri sidecar is not wired up yet — a built app still expects the backend on `localhost:8009`. Sidecar packaging, code signing, and notarization land in Phase 14.
 
 ---
 
@@ -201,7 +201,7 @@ learn-nodes-personalized/
 │   │   ├── styles/globals.css
 │   │   └── setup-vitest.ts
 │   ├── e2e/                  ← Playwright specs
-│   ├── vite.config.ts        ← dev server + /api → :8000 proxy
+│   ├── vite.config.ts        ← dev server + /api → :8009 proxy
 │   ├── vitest.config.ts
 │   ├── playwright.config.ts
 │   └── tailwind.config.js
@@ -241,15 +241,15 @@ Target layouts as features land (see [`openspec/tech-stack.md`](openspec/tech-st
 
 | Script | What it does |
 |---|---|
-| `pnpm run backend:dev` | FastAPI on port 8000 with auto-reload |
-| `pnpm run backend` | FastAPI on port 8000, no reload |
+| `pnpm run backend:dev` | FastAPI on port 8009 with auto-reload |
+| `pnpm run backend` | FastAPI on port 8009, no reload |
 | `pnpm run tauri <cmd>` | Passthrough to the Tauri CLI (`dev`, `build`, `info`, …) |
 
 ### Frontend (`cd frontend`)
 
 | Script | What it does |
 |---|---|
-| `pnpm run dev` | Vite dev server on `http://localhost:1420` |
+| `pnpm run dev` | Vite dev server on `http://localhost:5177` |
 | `pnpm run build` | `tsc` type-check, then production bundle → `dist/` |
 | `pnpm run preview` | Serve the built bundle |
 | `pnpm run typecheck` | `tsc --noEmit` |
@@ -264,7 +264,7 @@ Target layouts as features land (see [`openspec/tech-stack.md`](openspec/tech-st
 | Command | What it does |
 |---|---|
 | `uv sync --extra test` | Install runtime + test dependencies |
-| `uv run uvicorn main:app --reload --port 8000` | Run the API |
+| `uv run uvicorn main:app --reload --port 8009` | Run the API |
 | `uv run pytest` | Run the test suite |
 
 ---
@@ -321,11 +321,11 @@ Full detail, per-phase demos, and deferred items: [`openspec/roadmap.md`](opensp
 
 ## Troubleshooting
 
-**Port 1420 or 8000 already in use**
+**Port 5177 or 8009 already in use**
 
 ```bash
-lsof -ti:1420 | xargs kill    # Vite
-lsof -ti:8000 | xargs kill    # FastAPI
+lsof -ti:5177 | xargs kill    # Vite
+lsof -ti:8009 | xargs kill    # FastAPI
 ```
 
 **`pnpm run dev` / `pnpm run tauri dev` from the repo root loops or hangs**
@@ -339,7 +339,7 @@ lsof -ti:8000 | xargs kill    # FastAPI
 
 **Backend status shows "checking..." forever**
 
-The backend isn't running or CORS is blocking the request. `main.py` only allows the origin `http://localhost:1420` — if Vite fell back to another port (`strictPort: false`), either free port 1420 or add your port to `allow_origins`.
+The backend isn't running or CORS is blocking the request. `main.py` only allows the origin `http://localhost:5177` — if Vite fell back to another port (`strictPort: false`), either free port 5177 or add your port to `allow_origins`.
 
 **`uv sync` fails on the Python version**
 

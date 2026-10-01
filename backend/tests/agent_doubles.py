@@ -1,0 +1,101 @@
+"""An in-memory `Agent` for service tests.
+
+The subprocess-level fake (`tests/fixtures/fake_acp_agent.py`) proves the ACP
+client; this one proves the rules above it — registration, session mapping,
+turn recording — without a process, so those tests stay fast and say exactly
+which rule failed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from service.agent.contract import (
+    AgentCommand,
+    AgentInfo,
+    AgentLaunchError,
+    AgentNotAuthenticated,
+    Negotiation,
+    SessionLoadFailed,
+    TextChunk,
+    TurnEnded,
+    TurnEvent,
+)
+
+
+@dataclass(eq=False)
+class FakeAgent:
+    load_supported: bool = True
+    authenticated: bool = True
+    script: Callable[[str, str], list[TurnEvent]] | None = None
+    sessions: dict[str, list[str]] = field(default_factory=dict)
+    cwds: dict[str, Path] = field(default_factory=dict)
+    loaded: list[str] = field(default_factory=list)
+    closed: bool = False
+    cancelled: list[str] = field(default_factory=list)
+    gate: asyncio.Event | None = None
+    mcp: dict[str, list] = field(default_factory=dict)
+    mcp_loads: dict[str, list] = field(default_factory=dict)
+
+    @property
+    def negotiation(self) -> Negotiation:
+        return Negotiation(
+            protocol_version=1,
+            info=AgentInfo(name="fake-agent", title="Fake", version="1.0"),
+            load_session=self.load_supported,
+        )
+
+    @property
+    def alive(self) -> bool:
+        return not self.closed
+
+    async def new_session(self, cwd: Path, mcp_servers=()) -> str:
+        if not self.authenticated:
+            raise AgentNotAuthenticated("Authentication required")
+        session_id = f"s{len(self.sessions) + 1}"
+        self.sessions[session_id] = []
+        self.cwds[session_id] = cwd
+        self.mcp[session_id] = list(mcp_servers)
+        return session_id
+
+    async def load_session(self, session_id: str, cwd: Path, mcp_servers=()) -> None:
+        if not self.load_supported or session_id not in self.sessions:
+            raise SessionLoadFailed(f"unknown session {session_id}")
+        self.loaded.append(session_id)
+        self.mcp_loads[session_id] = list(mcp_servers)
+
+    async def prompt(self, session_id: str, text: str) -> AsyncIterator[TurnEvent]:
+        self.sessions[session_id].append(text)
+        events = self.script(session_id, text) if self.script else [TextChunk("pong")]
+        for event in events:
+            if self.gate is not None:
+                await self.gate.wait()
+            if session_id in self.cancelled:
+                yield TurnEnded("cancelled")
+                return
+            yield event
+        yield TurnEnded("completed")
+
+    async def cancel(self, session_id: str) -> None:
+        self.cancelled.append(session_id)
+        if self.gate is not None:
+            self.gate.set()
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def launcher_for(agent: FakeAgent | None = None, *, fail: bool = False):
+    launched: list[AgentCommand] = []
+
+    async def launch(command: AgentCommand) -> FakeAgent:
+        launched.append(command)
+        if fail:
+            raise AgentLaunchError(f"No such file or directory: {command.command!r}")
+        return agent or FakeAgent()
+
+    launch.launched = launched  # type: ignore[attr-defined]
+    return launch

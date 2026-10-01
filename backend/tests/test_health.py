@@ -1,9 +1,10 @@
 import pytest
 
-CORS_ORIGINS = (
-    "http://localhost:1420",
-    "http://127.0.0.1:1420",
-)
+from core.config import settings
+
+# Derived, not literal: the frontend port is allocated per dev session, so
+# pinning it here would re-break every time the default is taken.
+CORS_ORIGINS = settings.cors_origins
 
 
 @pytest.mark.asyncio
@@ -19,9 +20,10 @@ async def test_health_endpoint(async_client, origin):
 async def test_cors_allows_tauri_loopback_origins(async_client, origin):
     """Regression guard for the CORS allow-list.
 
-    The bundled Tauri webview reaches FastAPI via either `127.0.0.1` or
-    `localhost`; if either origin is dropped, the placeholder UI shows a
-    red dot even when the backend is healthy.
+    A developer bypassing the Vite proxy reaches FastAPI via either
+    `127.0.0.1` or `localhost`; if either origin is dropped, the status
+    indicator shows a red dot even when the backend is healthy. Broader
+    coverage lives in `test_cors.py`.
     """
 
     response = await async_client.get("/health", headers={"Origin": origin})

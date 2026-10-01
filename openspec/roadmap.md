@@ -1,6 +1,8 @@
 # Roadmap
 
-14 phases, each independently shippable. Each phase ends with something you can run and demo. Phases 0–7 build the foundation. Phases 8–13 are where the differentiated experience emerges.
+Phases 0–7 (with 3a, 3b, 5a) build the foundation; 8–15 are where the differentiated experience emerges. Each phase is independently shippable and ends with something you can run and demo.
+
+Lettered phases were inserted after the original numbering. They are not smaller — they are later-discovered prerequisites of the phases they precede: accounts must exist before per-learner data does, projects before a graph grows past one person's memory of it, and a command surface before skills are reachable rather than merely configured.
 
 ---
 
@@ -53,12 +55,70 @@
 - Node body as Markdown with YAML frontmatter (stored as TEXT in SQLite)
 - File upload endpoint: text/PDF (PyMuPDF text extraction) and image (stored, path recorded)
 - BTP (Back-To-Previous) SSE event emitted when file processing completes
-- Graph view (react-force-graph): spatial canvas with nodes as circles, links as lines
+- Graph view (React Flow / `@xyflow/react`): card-based canvas with directed branch edges, viewport controls, and a minimap — **delivered** by the `adopt-react-flow-node-canvas` change; this phase replaces its fixtures with real data
 - Three nav tabs: Outline (tree), Canvas (spatial), Timeline
 - Recent nodes strip on home view
 - Filter by tag; search by title (FTS5)
 
+> **UI frame:** the three-pane workspace, the graph-owns-center layout, and the nav surfaces are specified by the `node-workspace-ui` change; the canvas itself is specified by `react-flow-node-canvas`. This phase fills them with real data instead of fixtures.
+
 **Demo:** Create a node → attach a PDF → see it in the graph → click to enter → file is processed async → BTP fires.
+
+---
+
+## Phase 3a — Accounts
+*Goal: One install, several learners, each with their own graph.*
+
+- `Profile` identified by `(provider, subject)`; workspaces are owned by a profile and every request is scoped server-side
+- **BREAKING**: workspace routes stop accepting a client-supplied `workspaceId`
+- **Local sign-in**, registered unconditionally, so a fresh install is enterable with no environment variable, no network, and no external service. Delivered by `first-launch-entry`; it is what makes the phase shippable without waiting on any provider console.
+- Development sign-in (gated, no external service) remains beside it, and is what the Playwright suite signs in with — its derived subject is repeatable, which local sign-in's random one deliberately is not
+- Sign-out preserves data; deleting an account is a separate confirmed action
+- Google (PKCE + loopback) and GitHub (device flow) adapters follow as `oauth-identity-providers`. **No longer a prerequisite for using the app** — they add a portable identity that travels between machines, rather than the only way in.
+
+**Demo:** create a profile by name → build a graph → sign out → create a second profile → an empty graph → select the first from the picker → the first graph returns.
+
+---
+
+## Phase 3b — Projects + Archive
+*Goal: Group a graph without severing it.*
+
+- `Project` groups nodes within one account; a node belongs to exactly one, a **link may cross** projects
+- Project-level instructions and attached sources, layered over account-wide ones (nearest scope wins)
+- Archive as a state on projects and nodes — off the canvas and the recents rail, still searchable and restorable
+- Canvas renders project membership as grouping, not as a separate graph per project
+
+**Demo:** move a node into a project → its instructions apply → archive a project → it leaves the canvas → search still finds it → restore it.
+
+---
+
+## Phase 4a — Agent Backends over ACP
+*Goal: A node conversation runs on a subscription the learner already has — no API key.*
+
+Delivered by `acp-agent-backend`. Inserted ahead of Phase 4 because it makes the conversation live at zero marginal cost, and because it builds the streaming route Phase 7 assumed would already exist.
+
+- `Agent` contract (session-stateful) defined beside the `Provider` contract (stateless); only `Agent` implemented here
+- Agents registered by command — Codex (ChatGPT) and Claude Code presets (Google: deferred, `agy-antigravity-agent`) — and authenticated through their own clients; no credential ever handled here
+- Account-scoped default agent; a node records its agent on its first turn
+- Streaming turn over SSE, with cancellation and a recorded outcome per turn
+- Continuity across restarts via `session/load`, with transcript replay (and a visible seam) when it is unavailable
+- Compaction and inference-time skill merging declared unavailable on agent backends
+
+**Demo:** Settings → register Codex from the preset → Test → create a node → chat on the ChatGPT subscription → restart the app → the conversation continues.
+
+---
+
+## Phase 4b — Agent Permissions + Branching
+*Goal: An agent can act, read what the learner attached, and branch.*
+
+Delivered by `acp-agent-permissions-and-branching`.
+
+- Permission prompt inline and in a workspace-level indicator; reads inside the node auto-approved
+- Remembered decisions, scoped and revocable, never crossing agents or accounts
+- Node attachments placed in the node's working directory, removed with the node
+- Branching on agent backends: fresh session + parent transcript up to the anchor
+
+**Demo:** Ask the agent to write and run a solution → approve → it runs → branch from a passage → the child knows the parent's conversation up to that point.
 
 ---
 
@@ -69,7 +129,7 @@
 - Settings UI: paste API keys → stored encrypted (AES-GCM, key from macOS Keychain via `security` CLI)
 - Pick default provider + model per node (inherited from parent by default)
 - Connection test: POST `/providers/test` → streams a "hello" token response
-- Streaming SSE route: `POST /chat/stream` → `AsyncIterator[ChunkEvent]`
+- Streaming SSE route: reuses Phase 4a's `POST /chat/turn`; a `Provider` backend yields the same `TurnEvent`s an `Agent` does
 - No chat UI yet — just a "test chat" button in settings that shows streaming tokens
 
 **Demo:** Settings → paste Anthropic key → click test → tokens stream in real time.
@@ -90,8 +150,21 @@
 
 ---
 
+## Phase 5a — Command Palette
+*Goal: Skills are reachable, not merely configured.*
+
+- ⌘K palette over nodes, projects, and skills
+- Skills invocable as commands from the palette and from the conversation composer
+- Command surface is generated from the loaded skill set, so a new skill is reachable without UI work
+
+**Demo:** drop a skill folder in `~/.learn-nodes/skills/` → ⌘K → it is listed → run it in the open node.
+
+---
+
 ## Phase 6 — MCP Foundation
 *Goal: External tools available to the agent, user-configured.*
+
+> **Not to be confused with `agent-shared-context-mcp`**, which goes the other way: there the application *is* an MCP server that agents call for the learner's sessions, practice, and memory. This phase is the application *consuming* external MCP servers.
 
 - MCP client: connect to a configured MCP server URL via SSE
 - Settings UI: add/remove MCP server (URL + auth token)
@@ -108,10 +181,12 @@
 
 - Per-node chat panel on the node detail view
 - Chat messages stored in `ChatMessage` table (role, content, timestamp)
-- Streaming responses via SSE using the configured provider
+- Streaming responses via SSE using the configured provider — the route, the turn recording, and cancellation are inherited from Phase 4a rather than defined here
 - Agent context = node body + extracted file content + active skills + active MCP tools
 - Skills and MCP tools invocable from chat via the unified tool list
 - BTP re-injects completed file content into active context when fired
+
+> **UI frame:** the node conversation surface, in-node threads, and the selection affordance are specified by the `node-workspace-ui` change. This phase makes the conversation live (streaming, real provider) rather than fixture-backed.
 
 **Demo:** Enter node → chat with agent → agent uses skill → agent calls MCP tool → response streams in real time.
 
@@ -130,6 +205,8 @@
 - On create: new `Node` row with `parent_id` = source node ID, `fork_point` = selected turn
 - New node's chat starts empty (fresh thread); parent's full history is reference context
 - Graph view updates to show the new child link immediately
+
+> **UI frame:** branching from a text selection — and the node-vs-thread choice — is specified by the `node-workspace-ui` change. Note that `fork_point` as a turn index is superseded there by a `SelectionAnchor` (`message_id`, `start`, `end`, `excerpt`), because a branch anchors to a passage, not a whole turn.
 
 **Demo:** Node A (5 turns) → branch at turn 3 → Node B created → enter Node B → chat continues from turn 3 context → graph shows Node B as child of A.
 
@@ -176,6 +253,8 @@
 ## Phase 11 — Persistent Memory
 *Goal: Cross-node facts are extracted and available everywhere.*
 
+> **Core delivered by `agent-shared-context-mcp`:** agents propose memory through the local context server (`propose_memory`, with a stable `topic` so a fact is revised rather than duplicated); the learner accepts, edits, or rejects each proposal in the memory panel; accepted memory is readable by every agent in every session (`recall_memory`) rather than injected into prompts. Remaining here: proposing memory automatically after each chat.
+
 - `Memory` table: `id`, `fact` (short atomic statement), `source_node_id`, `created_at`
 - After each chat: agent proposes 0–3 memory candidates ("things the learner now knows that weren't known before")
 - Memory panel: user sees proposed facts → accepts / edits / rejects each
@@ -188,6 +267,8 @@
 ---
 
 ## Phase 12 — Practice (Self-Authoring)
+
+> **Partly delivered:** `practice-rail-foundation` built the rail (Q&A, Quiz, and a WASM Python sandbox); `agent-shared-context-mcp` lets agents author questions and code exercises into it (`add_question`, `add_code_exercise`, or `/qa`, `/quiz`, `/code` in the composer), delivered to the rail as they are created.
 *Goal: Agent generates practice material from node content — code, Q&A, quiz — without a separate pipeline.*
 
 - Mode-driven practice generation:
@@ -258,7 +339,7 @@
 
 | Item | Reason deferred |
 |---|---|
-| **Subscription providers** (Codex, Claude Pro/Max OAuth) | OAuth flows per provider are significant work; BYOK covers most users |
+| ~~**Subscription providers**~~ | **No longer deferred.** Promoted into Phase 4a as an additional source of the same `Credential`. Verify each provider's consumer terms before shipping its adapter — a third-party client using a consumer subscription is not automatically permitted. |
 | **Written response practice format** | Needs LLM rubric grading that's harder to evaluate than Q&A |
 | **Multiple-choice practice format** | Needed for Quiz mode; can add once Q&A is proven |
 | **Video file analysis** (ffmpeg + Whisper) | Heavy deps; text + image covers most v1 use cases |
@@ -272,9 +353,9 @@
 ## Phase Dependencies
 
 ```
-Phase 0  ──► Phase 1  ──► Phase 2  ──► Phase 3  ──► Phase 4  ──► Phase 5
- (skeleton)    (model)    (CRUD+    (provider   (skills)
-                              graph)      layer)
+Phase 0 ─► 1 ─► 2 ─► 3 ─► 3a ─► 3b ─► 4 ─► 5 ─► 5a
+(skeleton) (model) (CRUD  (accounts) (projects) (provider) (skills) (commands)
+                   +graph)                       layer)
                                           │
                                           ▼
                                  Phase 6 (MCP)

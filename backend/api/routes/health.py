@@ -19,12 +19,17 @@ ids, database sessions) without re-introducing the legacy
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 
 class Health(BaseModel):
     status: Literal["ok"]
+    backend: Literal["fastapi"]
+
+
+class Readiness(BaseModel):
+    status: Literal["ready"]
     backend: Literal["fastapi"]
 
 
@@ -49,3 +54,12 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 async def health(_request_id: RequestIdDep) -> Health:
     return Health(status="ok", backend="fastapi")
+
+
+@router.get("/ready")
+async def ready(request: Request, _request_id: RequestIdDep) -> Readiness:
+    runtime = request.app.state.runtime
+    if not runtime.ready:
+        detail = runtime.error or "Local data initialization is still pending"
+        raise HTTPException(status_code=503, detail=detail)
+    return Readiness(status="ready", backend="fastapi")

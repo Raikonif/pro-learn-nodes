@@ -4,6 +4,7 @@
 
 - **Tauri 2** (Rust + system WebView) — small bundle (~10MB), native macOS feel, FastAPI runs as a bundled sidecar binary.
 - Tauri ↔ FastAPI communication: **HTTP on localhost** during dev; Unix socket in production builds for reliability.
+- Dev ports are allocated, not fixed: **5177** (frontend) and **8009** (backend) by default, falling back to the next free port. In dev the frontend issues relative `/api/*` requests to the Vite dev server, which strips the prefix and forwards to the backend — so browser traffic is same-origin and CORS is not on the request path. A process allocates the port it binds and discovers the ports it only connects to.
 
 ## Frontend
 
@@ -12,7 +13,7 @@
 - **Tailwind CSS** — styling
 - **Zustand** — local state
 - **React Router** — routing
-- **react-force-graph** — spatial graph canvas (2D primary, 3D toggle)
+- **React Flow (`@xyflow/react`)** — the session graph canvas: custom chat-like node cards, directed branch edges, viewport controls, minimap. Chosen over a force-directed renderer because a learning graph is read as structure, not as a physics simulation — cards carry titles and mode, and positions must stay where the learner put them.
 - **TipTap** — rich text authoring in node bodies
 - **Shiki** — syntax highlighting in code blocks
 - **Vitest** — unit and integration testing
@@ -126,6 +127,23 @@ CompactionStep
 └── created_at
 ```
 
+## Accounts
+
+A desktop install holds several accounts, each with its own graph. Identity is the pair `(provider, subject)`; email and display name are refreshed on every sign-in and never identify anyone.
+
+- Sign-in follows **RFC 8252 (OAuth 2.0 for Native Apps)** — system browser, never an embedded webview, and no client secret in the bundle. Google uses PKCE with a loopback redirect (its any-port rule fits the allocated-port model); GitHub uses **Device Flow**, which has no redirect at all and so is immune to a moving port.
+- A **development sign-in** enrolls an account with no external service at all. It is gated by a process-environment-only setting, absent (404) when closed, and is what lets the Playwright suite sign in — browser automation cannot pass a hosted consent screen.
+- OAuth is **enrollment, not a session gate**: it runs once per account. Afterwards the active account is a pointer in the system Keychain, so launching works offline.
+- The partition is **not a security boundary**. Local data is a readable file and the Keychain is scoped to the OS user. It separates work, not people with disk access.
+
+## Projects
+
+A project groups nodes within one account's graph, mirroring the container model ChatGPT Projects established, with one deliberate difference.
+
+- A node belongs to **exactly one** project; a **link may cross** projects. That keeps the mission's shared-child DAG expressible — a node lives in one project and stays reachable from a parent in another — which a strict containment model would forbid.
+- Projects carry **instructions** and **attached sources** that apply to every node inside them, layered over the account-wide equivalents. The precedence rule follows Codex's `AGENTS.md`: the nearest scope wins.
+- **Archive** is a state on a project and on a node, not a deletion. Archived material leaves the canvas and the recents rail but stays searchable and restorable.
+
 ## AI Provider Layer (Pluggable, BYOK)
 
 A single `Provider` protocol that every adapter implements:
@@ -145,6 +163,7 @@ class Provider(Protocol):
 
 - **Built-in adapters:** `AnthropicAdapter`, `OpenAIAdapter`, `OpenRouterAdapter`, `OllamaAdapter`
 - **BYOK** — users paste API keys; stored encrypted (AES-GCM, key in macOS Keychain)
+- **Subscription sign-in** — where a provider offers an OAuth flow for a consumer subscription, it is an additional *source* of the same `Credential`, not a separate path. Adapters see a bearer token and a base URL and never learn which source produced it.
 - **Skills at inference time** — the provider receives the active skill list per request; skills are not build-time plugins
 
 ## Skills System
@@ -270,7 +289,7 @@ Three navigation modes available as tabs/toggles:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  SPATIAL CANVAS (react-force-graph)                         │
+│  SPATIAL CANVAS (React Flow / @xyflow/react)                │
 │  ─────────────────────────────────────────────────────────  │
 │  Nodes as circles, links as lines, pan/zoom, click to enter │
 │  Color = mode, size = recency, line thickness = recency     │
@@ -316,6 +335,8 @@ Three navigation modes available as tabs/toggles:
 | Choice | Why |
 |---|---|
 | **Tauri over Electron** | ~10× smaller bundle, native macOS feel, fast cold start |
+| **React Flow over a force-directed graph** | Positions are meaning, not physics: a learner arranges their own graph and it must stay arranged. Node cards also carry title and mode, which anonymous circles cannot. |
+| **Accounts on top of BYOK** | An account partitions one machine's graphs and scopes provider credentials to the learner using them; it does not introduce billing or a server. |
 | **FastAPI over tRPC** | Python ML ecosystem stays first-class (PyMuPDF, Pyodide bridge, sentence-transformers later) |
 | **SQLModel** | One model = DB row + API schema; natural for the session tree data model |
 | **SQLite** | One file, agent-inspectable, backup = `cp`, FTS5 included, supports DAG via self-join |

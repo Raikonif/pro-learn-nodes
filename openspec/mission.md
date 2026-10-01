@@ -47,6 +47,7 @@ You open the app
 
 1. **Sessions Are Nodes** — Every conversation lives in a node. Every node is a session. They are the same thing.
 2. **Graph Navigation IS the Product** — You traverse links between sessions, not search through chat history. The shape of the graph is a first-class UX concern.
+   *Branching alone is not the differentiator — mainstream chat apps ship it. They create branches and then offer no way to see the tree those branches form. The navigable structure is the product; the branch is just how a node gets made.*
 3. **Inheritance with Foresight** — Child sessions inherit context from parents (linked, not copied). You choose what carries forward.
 4. **Corrections Compound** — When you correct the agent, the node updates. You decide whether children are notified.
 5. **Self-Authoring Practice** — The agent generates questions, quizzes, and code sandboxes from your material — not from generic templates.
@@ -55,14 +56,16 @@ You open the app
 8. **Async File Processing** — Upload a file and keep chatting. The agent catches up when it's ready (BTP).
 9. **Hierarchical Compaction** — Context compresses at ~50% of the model's window. Every summary step is stored and drillable.
 10. **Persistent Cross-Node Memory** — Facts the agent extracts are stored globally, surfaced in every new session.
-11. **Yours Forever** — Local-first. Plain-text where possible. BYOK. No billing platform.
-12. **Open Ecosystem** — macOS first. CLI companion. Community ports welcome. Skills and MCP configs are plain files.
+11. **Projects Group, They Do Not Divide** — A project gathers nodes and carries instructions and sources for them, but a link may cross project lines. Grouping your work must never sever the graph.
+12. **Yours Forever** — Local-first. Plain-text where possible. No billing platform. One install holds several accounts, each with its own graph; signing in picks which graph you are working in, and it works offline after the first enrollment.
+13. **Open Ecosystem** — macOS first. CLI companion. Community ports welcome. Skills and MCP configs are plain files.
 
 ## Anti-Goals
 
 - **Not a chat list** — sessions are not isolated conversations you search; they are a graph you navigate
+- **Not invisible branching** — a branch that cannot be seen, entered, and re-entered is a dead end with extra steps
 - **Not auto-propagation** — corrections never flow downstream without explicit user consent
-- **Not a billing platform** — you bring your own API keys
+- **Not a billing platform** — you bring your own credentials, whether an API key or a subscription you already pay for. An account partitions your graphs; it does not sell you anything.
 - **Not a closed garden** — export is plain Markdown, the DB is SQLite, skills are markdown files
 - **Not a replacement for tutors** — an amplifier of the learner's own exploration
 

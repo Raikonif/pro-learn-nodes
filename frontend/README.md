@@ -1,6 +1,6 @@
 # Frontend — Learn Nodes
 
-React 19 + TypeScript + Vite. Talks to the FastAPI backend at `http://localhost:8000` (proxied through Vite).
+React 19 + TypeScript + Vite. Talks to the FastAPI backend at `http://localhost:8009` (proxied through Vite).
 
 ## Scripts
 

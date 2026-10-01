@@ -1,0 +1,89 @@
+## Purpose
+
+The three-pane working surface where a learner navigates the session graph, enters a node's conversation, and reaches practice tools — arranged so the shape of the graph stays visible even while working inside a single node.
+
+## ADDED Requirements
+
+### Requirement: Workspace presents three panes
+The workspace SHALL present exactly three panes: a left rail indexing nodes, a center region holding either the graph or an open node's conversation, and a right rail. The workspace SHALL be the root view of the application window.
+
+#### Scenario: Window opens on the workspace
+- **WHEN** the application window opens
+- **THEN** the visible content is the workspace showing a left rail, a center region, and a right rail
+
+### Requirement: Graph occupies the center when no node is open
+When no node is open, the center region SHALL render the session graph, and the right rail SHALL NOT render a minimap. The graph SHALL support entering a node by activating it.
+
+#### Scenario: Idle workspace shows the graph
+- **WHEN** the workspace is open and no node has been entered
+- **THEN** the center region renders the session graph and the right rail shows no minimap
+
+#### Scenario: Activating a graph node enters it
+- **WHEN** the learner activates a node in the center graph
+- **THEN** that node is opened in the workspace
+
+### Requirement: Entering a node moves the conversation to the center and the graph to the right rail
+When a node is opened, the center region SHALL render that node's conversation, and the graph SHALL move into the right rail as a minimap. The graph SHALL NOT be dismissed or hidden on entering a node.
+
+#### Scenario: Node entry relocates both surfaces
+- **WHEN** the learner opens a node from the center graph
+- **THEN** the center region renders that node's conversation and the graph is rendered as a minimap in the right rail
+
+#### Scenario: Leaving a node restores the graph to the center
+- **WHEN** the learner closes the open node
+- **THEN** the center region renders the session graph again and the right-rail minimap is removed
+
+### Requirement: Minimap indicates and changes position
+The right-rail minimap SHALL visually distinguish the currently open node from all other nodes. Activating a different node in the minimap SHALL open that node in the center region without returning to the center graph first.
+
+#### Scenario: Open node is distinguished in the minimap
+- **WHEN** a node is open
+- **THEN** the minimap renders that node in a visually distinct state from every other node
+
+#### Scenario: Minimap navigates directly between nodes
+- **WHEN** the learner activates a different node in the minimap
+- **THEN** the center region switches to that node's conversation and the minimap updates which node is distinguished
+
+### Requirement: Right rail stacks the minimap above the practice tools
+While a node is open, the right rail SHALL render the minimap in a fixed-height region at its top and the practice tools below it, filling the remaining height. The minimap SHALL NOT be a peer tab of the practice tools, and selecting a practice tool SHALL NOT hide the minimap.
+
+#### Scenario: Both surfaces visible simultaneously
+- **WHEN** a node is open and the learner selects a practice tool in the right rail
+- **THEN** the selected tool renders below the minimap and the minimap remains visible
+
+### Requirement: Minimap collapses to a breadcrumb when vertical space is constrained
+When available right-rail height is insufficient to render the minimap at its fixed height alongside the practice tools, the minimap SHALL collapse to a breadcrumb strip naming the path to the open node. The collapsed breadcrumb SHALL expand to the full minimap on hover.
+
+#### Scenario: Constrained height collapses the minimap
+- **WHEN** the right rail has insufficient height for the minimap and the practice tools
+- **THEN** the minimap is replaced by a breadcrumb strip naming the path to the open node
+
+#### Scenario: Hovering the breadcrumb restores the minimap
+- **WHEN** the learner hovers the collapsed breadcrumb strip
+- **THEN** the full minimap is rendered
+
+### Requirement: Left rail indexes nodes only
+The left rail SHALL provide recency-ordered access to nodes and search across nodes. The left rail SHALL NOT list conversation threads, and SHALL NOT present nodes as a flat chat history in place of the graph. Navigation between nodes SHALL remain available through the graph and the minimap.
+
+#### Scenario: Left rail lists nodes by recency
+- **WHEN** the learner opens the workspace
+- **THEN** the left rail lists recently opened nodes, most recent first
+
+#### Scenario: Left rail excludes threads
+- **WHEN** a node contains one or more spawned threads
+- **THEN** none of those threads appear in the left rail
+
+#### Scenario: Search returns nodes
+- **WHEN** the learner enters a search term in the left rail
+- **THEN** matching nodes are listed, and activating one opens it in the center region
+
+### Requirement: Workspace is styled with Tailwind utilities and remains legible at 800×600
+The workspace SHALL be styled using Tailwind utility classes only, with no custom CSS files and no inline `style` props. All three panes SHALL remain legible and usable at a window size of 800×600.
+
+#### Scenario: Styling uses Tailwind utilities
+- **WHEN** the workspace is inspected in the browser
+- **THEN** the rendered HTML uses Tailwind class names and no custom stylesheet is loaded
+
+#### Scenario: Layout holds at minimum window size
+- **WHEN** the window is resized to 800×600
+- **THEN** all three panes remain visible and their contents remain legible

@@ -17,8 +17,9 @@
           "sidecar": true,
           "args": [
             "--uds",
-            "--host",
-            "--port"
+            {
+              "validator": ".+"
+            }
           ]
         }
       ]

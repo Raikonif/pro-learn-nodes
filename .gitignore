@@ -83,3 +83,5 @@ app-data/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+# Dev port record — written by scripts/backend.mjs, never a source of truth
+.dev-ports.json

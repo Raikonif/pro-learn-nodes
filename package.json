@@ -4,11 +4,13 @@
   "private": true,
   "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "node scripts/dev.mjs",
+    "all:dev": "node scripts/dev-all.mjs",
     "build": "tauri build",
     "tauri": "tauri",
-    "backend:dev": "cd backend && uv run uvicorn main:app --port 8000 --reload",
-    "backend": "cd backend && uv run uvicorn main:app --port 8000"
+    "backend:dev": "node scripts/backend.mjs --reload",
+    "backend": "node scripts/backend.mjs",
+    "test:scripts": "node --test \"scripts/*.test.mjs\""
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4"

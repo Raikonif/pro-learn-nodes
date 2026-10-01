@@ -5,7 +5,7 @@
   "identifier": "com.learnnodes.app",
   "build": {
     "frontendDist": "../frontend/dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:5177",
     "beforeDevCommand": {
       "script": "pnpm run dev",
       "cwd": "../frontend"

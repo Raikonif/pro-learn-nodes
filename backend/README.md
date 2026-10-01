@@ -8,8 +8,23 @@ FastAPI + SQLModel + Python 3.13+. Package management via [uv](https://docs.astr
 |---|---|
 | `uv sync` | Install runtime dependencies |
 | `uv sync --extra test` | Install runtime + test dependencies |
-| `uv run uvicorn main:app --reload --port 8000` | Run the API on `localhost:8000` |
+| `uv run uvicorn main:app --reload --port 8009` | Run the API on `localhost:8009` |
 | `uv run pytest` | Run the test suite |
+
+## Building the Tauri sidecar
+
+The production Tauri bundle launches `learn-nodes-backend` with a Unix domain
+socket argument. Build the architecture-specific executable from this
+directory before running `tauri build`:
+
+```bash
+uv sync --extra build
+uv run pyinstaller --clean --noconfirm learn-nodes-backend.spec
+cp dist/learn-nodes-backend ../src-tauri/binaries/learn-nodes-backend-$(rustc -vV | awk '/host:/ {print $2}')
+```
+
+The sidecar accepts `--uds <path>` for production and `--host`/`--port` for
+local smoke tests.
 
 ## Testing
 
