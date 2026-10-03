@@ -72,6 +72,16 @@ async def make_default(
         raise HTTPException(status_code=404, detail=str(error))
 
 
+@router.get("/{agent_id}/offer")
+async def agent_offer(agent_id: str, _runtime: RuntimeDep, profile: ActiveProfile) -> dict[str, Any]:
+    """What the agent last reported offering on this device: controls and commands."""
+
+    try:
+        return registry.agent_offer(profile.id, agent_id)
+    except NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
 @router.post("/{agent_id}/test")
 async def test_agent(
     agent_id: str, _runtime: RuntimeDep, profile: ActiveProfile, launch: LauncherDep

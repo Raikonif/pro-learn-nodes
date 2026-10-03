@@ -18,13 +18,15 @@ from typing import Any
 import logging
 import re
 
+from sqlmodel import Session
+
 from core.database import database_path, session_scope
 from core.exceptions import NotFoundError, ValidationError
 from models.practice import PracticeAttemptRecord, PracticeItemRecord, SandboxBufferRecord
 from models.workspace import WorkspaceNodeRecord
 from repository import practice_repo
 
-__all__ = ["author_item", "node_practice", "read_sandbox", "record_attempt", "save_sandbox"]
+__all__ = ["author_item", "node_practice", "read_sandbox", "record_attempt", "save_sandbox", "stamp_delivery"]
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ def _item(item: PracticeItemRecord) -> dict[str, Any]:
             if item.authored_by_name is None
             else {"agentId": item.authored_by_agent_id, "name": item.authored_by_name}
         ),
+        "deliveryId": item.delivery_id,
         "createdAt": _iso(item.created_at),
     }
 
@@ -190,6 +193,20 @@ def record_attempt(workspace_id: str, item_id: str, answer: dict[str, Any]) -> d
             correct=correct,
         )
         return _attempt(attempt)
+
+
+def stamp_delivery(
+    session: Session, workspace_id: str, node_id: str, delivery_id: str, item_ids: list[str]
+) -> None:
+    """Mark items as brought by one delivery, in the caller's transaction.
+
+    Takes the session rather than opening one so the delivery's record and
+    its items' stamp commit together: a reader never sees a delivery whose
+    items do not yet name it. Scoped to the node, so an id the agent passed
+    for another node's item changes nothing.
+    """
+
+    practice_repo.set_delivery(session, workspace_id, node_id, item_ids, delivery_id)
 
 
 def node_practice(workspace_id: str, node_id: str) -> dict[str, Any]:

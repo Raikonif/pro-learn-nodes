@@ -1,12 +1,14 @@
 import { create } from 'zustand'
 
 import {
+  fetchAgentOffer,
   listAgents,
   registerAgent,
   removeAgent,
   setDefaultAgent,
   testAgent,
   type Agent,
+  type AgentOffer,
   type AgentPreset,
   type AgentRegistration,
   type ConnectionTest,
@@ -20,12 +22,24 @@ export type AgentTestState =
   | { status: 'done'; result: ConnectionTest }
   | { status: 'error'; message: string }
 
+/**
+ * The last offer read for one agent. `offer` survives a refresh and a failed
+ * one, so the controls never blank while the next read is in flight.
+ */
+export type OfferState = {
+  status: 'loading' | 'ready' | 'error'
+  offer: AgentOffer | null
+  error: string | null
+}
+
 export type AgentsState = {
   agents: Agent[]
   presets: AgentPreset[]
   status: LoadStatus
   error: string | null
   tests: Record<string, AgentTestState>
+  /** What each agent offers a session, by agent id (agent-session-controls). */
+  offers: Record<string, OfferState>
   /** Whether the agent settings panel is showing. */
   panelOpen: boolean
   load: () => Promise<void>
@@ -34,6 +48,13 @@ export type AgentsState = {
   remove: (agentId: string) => Promise<void>
   makeDefault: (agentId: string) => Promise<void>
   test: (agentId: string) => Promise<void>
+  /** Reads an agent's offer unless it is already held (or being read). */
+  ensureOffer: (agentId: string) => Promise<void>
+  /**
+   * Re-reads an agent's offer. The backend records it whenever a session
+   * opens, so a finished turn is the moment it may have changed.
+   */
+  refreshOffer: (agentId: string) => Promise<void>
   openPanel: () => void
   closePanel: () => void
   /**
@@ -49,12 +70,16 @@ const EMPTY = {
   status: 'idle',
   error: null,
   tests: {},
+  offers: {},
   panelOpen: false,
 } satisfies Partial<AgentsState>
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+
+/** Bumped by `discard`, so an offer read for the previous account is dropped. */
+let accountEpoch = 0
 
 export const useAgentsStore = create<AgentsState>((set, get) => ({
   ...EMPTY,
@@ -100,9 +125,37 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     }
   },
 
+  ensureOffer: async (agentId) => {
+    if (get().offers[agentId]) return
+    await get().refreshOffer(agentId)
+  },
+
+  refreshOffer: async (agentId) => {
+    const epoch = accountEpoch
+    const previous = get().offers[agentId]?.offer ?? null
+    set({
+      offers: {
+        ...get().offers,
+        [agentId]: { status: previous ? 'ready' : 'loading', offer: previous, error: null },
+      },
+    })
+    try {
+      const offer = await fetchAgentOffer(agentId)
+      if (epoch !== accountEpoch) return
+      set({ offers: { ...get().offers, [agentId]: { status: 'ready', offer, error: null } } })
+    } catch (error) {
+      if (epoch !== accountEpoch) return
+      const offer = get().offers[agentId]?.offer ?? null
+      set({ offers: { ...get().offers, [agentId]: { status: 'error', offer, error: describe(error) } } })
+    }
+  },
+
   openPanel: () => set({ panelOpen: true }),
   closePanel: () => set({ panelOpen: false }),
-  discard: () => set({ ...EMPTY }),
+  discard: () => {
+    accountEpoch += 1
+    set({ ...EMPTY })
+  },
 }))
 
 /** The account's default agent, if one is registered. */

@@ -1,3 +1,5 @@
+> **Split 2026-10-03:** branching on agent backends moved to `node-branch-inheritance`. This change keeps the permission surface and the node directory's attachments, and is deferred until a case arises that the practice rail and the context server do not cover — agents now deliver practice through MCP without touching the learner's system.
+
 ## Why
 
 `acp-agent-backend` makes a node conversation run on an agent the learner already pays for, but deliberately stops short in three places. Every permission request is refused, so an agent can explain but never act — no file written, no exercise run in the sandbox. A node's working directory is empty, so the agent cannot read what the learner attached. And a node branched from an agent conversation starts with no memory of its parent, which breaks the graph's central promise: that a branch inherits the conversation it grew from.
@@ -8,7 +10,6 @@
 - **Auto-decide reads** inside the node's own directory; ask for writes, anything outside it, and every execution.
 - **Remember decisions** at a scope the learner chooses, reviewable and revocable, never crossing agents or accounts.
 - Place a node's **attachments in its working directory**, and remove the directory with the node.
-- **Branch on agent backends** by opening a fresh session for the child and handing it the parent's recorded conversation up to the branch point, with the selected passage identified as the reason. This reuses the replay primitive `acp-agent-backend` builds for restart continuity, and works on every agent regardless of whether it reports a native fork.
 
 ## Capabilities
 
@@ -18,7 +19,7 @@
 
 ### Modified Capabilities
 
-- `node-agent-sessions`: adds what a branch means when the agent holds the thread, and the working directory's contents and lifetime.
+- `node-agent-sessions`: adds the working directory's contents and lifetime.
 
 ## Impact
 

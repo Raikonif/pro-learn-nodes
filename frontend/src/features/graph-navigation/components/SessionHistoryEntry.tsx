@@ -1,9 +1,12 @@
 import { useId, useState, type KeyboardEvent } from 'react'
 
 import type { WorkspaceNode } from '../../../shared/lib/workspace-types'
+import { MoveToProject, ProjectChip } from '../../projects'
 
 export type SessionHistoryEntryProps = {
   node: WorkspaceNode
+  /** Name the session's project: while every project is listed, an entry says which it is in. */
+  showProject?: boolean
   current: boolean
   /** The beginning of the session's most recent message, if it has one. */
   preview: string | null
@@ -16,15 +19,16 @@ export type SessionHistoryEntryProps = {
 
 /**
  * One session in the history: its title, a preview of where it left off, the
- * agent it ran on, and the two things the history lets you do to it — rename
- * and archive. Never delete: the history retires sessions, it does not lose
- * them.
+ * agent it ran on, and what the history lets you do to it — rename, archive,
+ * and move it to another project. Never delete: the history retires sessions,
+ * it does not lose them.
  *
  * The open button is named by the title alone (`aria-label`) so the preview
  * and agent read as its description rather than as part of its name.
  */
 function SessionHistoryEntry({
   node,
+  showProject = false,
   current,
   preview,
   agentName,
@@ -83,7 +87,7 @@ function SessionHistoryEntry({
     }
   }
 
-  const hasDetails = preview !== null || agentName !== null
+  const hasDetails = preview !== null || agentName !== null || (showProject && node.projectId !== null)
 
   return (
     <li
@@ -139,6 +143,7 @@ function SessionHistoryEntry({
                   {preview}
                 </span>
               ) : null}
+              {showProject ? <ProjectChip projectId={node.projectId} /> : null}
               {agentName !== null ? (
                 <span data-testid="session-agent" className="truncate text-[11px] text-gray-400">
                   {agentName}
@@ -150,7 +155,7 @@ function SessionHistoryEntry({
       )}
 
       {!editing ? (
-        <div className="flex gap-2 px-2 pb-1 text-[11px] text-gray-500">
+        <div className="flex flex-wrap gap-x-2 px-2 pb-1 text-[11px] text-gray-500">
           <button
             type="button"
             aria-label={`Rename ${node.title}`}
@@ -167,6 +172,12 @@ function SessionHistoryEntry({
           >
             Archive
           </button>
+          <MoveToProject
+            nodeId={node.id}
+            nodeTitle={node.title}
+            currentProjectId={node.projectId}
+            className="hover:text-gray-900 hover:underline"
+          />
         </div>
       ) : null}
     </li>

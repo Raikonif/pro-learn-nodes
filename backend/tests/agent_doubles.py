@@ -38,6 +38,11 @@ class FakeAgent:
     cancelled: list[str] = field(default_factory=list)
     gate: asyncio.Event | None = None
     mcp: dict[str, list] = field(default_factory=dict)
+    # Session controls: the options a new session reports, values set, commands.
+    offered: list = field(default_factory=list)
+    commands: list = field(default_factory=list)
+    settings: dict[str, dict[str, str]] = field(default_factory=dict)
+    set_calls: list = field(default_factory=list)
     mcp_loads: dict[str, list] = field(default_factory=dict)
 
     @property
@@ -79,6 +84,20 @@ class FakeAgent:
             yield event
         yield TurnEnded("completed")
 
+    def config_options(self, session_id: str) -> list:
+        from service.agent.contract import ConfigOption
+
+        current = self.settings.get(session_id, {})
+        return [ConfigOption(o.id, o.name, o.category, current.get(o.id, o.current), o.values) for o in self.offered]
+
+    def available_commands(self, session_id: str) -> list:
+        return list(self.commands)
+
+    async def set_config_option(self, session_id: str, option_id: str, value: str) -> list:
+        self.set_calls.append((session_id, option_id, value))
+        self.settings.setdefault(session_id, {})[option_id] = value
+        return self.config_options(session_id)
+
     async def cancel(self, session_id: str) -> None:
         self.cancelled.append(session_id)
         if self.gate is not None:
@@ -99,3 +118,19 @@ def launcher_for(agent: FakeAgent | None = None, *, fail: bool = False):
 
     launch.launched = launched  # type: ignore[attr-defined]
     return launch
+
+
+def offered_options(default_mode: str = "default"):
+    """Options shaped like both measured agents': model, effort, mode, fast."""
+
+    from service.agent.contract import ConfigOption, ConfigValue
+
+    def option(oid, category, current, values):
+        return ConfigOption(oid, oid.title(), category, current, tuple(ConfigValue(v, v.title()) for v in values))
+
+    return [
+        option("model", "model", "fast-1", ["fast-1", "smart-2"]),
+        option("effort", "thought_level", "medium", ["low", "medium", "high"]),
+        option("mode", "mode", default_mode, ["default", "acceptEdits", "bypassPermissions", "weird-mode"]),
+        option("fast", "model_config", "off", ["off", "on"]),
+    ]

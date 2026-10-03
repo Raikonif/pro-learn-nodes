@@ -566,3 +566,97 @@ describe('RecentsRail — search', () => {
     expect(state.revealedMessageId).toBeNull()
   })
 })
+
+describe('RecentsRail — projects', () => {
+  const store = () => useWorkspaceStore.getState()
+
+  async function algebraWith(...nodeIds: string[]): Promise<string> {
+    let id = ''
+    await act(async () => {
+      id = await store().createProject('Algebra')
+      for (const nodeId of nodeIds) await store().moveNodeToProject(nodeId, id)
+    })
+    return id
+  }
+
+  it('names each entry\'s project while every project is shown', async () => {
+    await algebraWith('n-haskell')
+    render(<RecentsRail />)
+
+    expect(within(entryFor('Haskell')).getByTestId('session-project')).toHaveTextContent('Algebra')
+    expect(within(entryFor('Functors')).getByTestId('session-project')).toHaveTextContent('General')
+  })
+
+  it('narrows the history to one project, still grouped by day, and drops the chips', async () => {
+    const id = await algebraWith('n-haskell', 'n-cat')
+    render(<RecentsRail />)
+
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+
+    expect(entryTitles()).toEqual(['Haskell', 'Category Theory'])
+    expect(screen.queryByTestId('session-project')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('region').length).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: '' } })
+    expect(entryTitles()).toHaveLength(5)
+  })
+
+  it('says so when the filtered project has no sessions', async () => {
+    const id = await algebraWith()
+    render(<RecentsRail />)
+
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+
+    expect(screen.getByText('No sessions in this project yet.')).toBeInTheDocument()
+  })
+
+  it('leaves the canvas and the store\'s sessions alone when filtering', async () => {
+    const id = await algebraWith('n-haskell')
+    const graph = store().graph
+    render(<RecentsRail />)
+
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+
+    expect(store().graph).toBe(graph)
+  })
+
+  it('moves a session from its entry, offering unarchived projects other than its own', async () => {
+    const algebra = await algebraWith()
+    let archivedId = ''
+    await act(async () => {
+      archivedId = await store().createProject('Shelved')
+      await store().archiveProject(archivedId)
+    })
+    render(<RecentsRail />)
+
+    fireEvent.click(within(entryFor('Haskell')).getByRole('button', { name: 'Move Haskell to a project' }))
+    const menu = screen.getByRole('group', { name: 'Move Haskell to' })
+    expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual(['Algebra'])
+
+    await act(async () => {
+      fireEvent.click(within(menu).getByRole('button', { name: 'Move Haskell to Algebra' }))
+    })
+
+    expect(store().graph.nodes.find((n) => n.id === 'n-haskell')!.projectId).toBe(algebra)
+    expect(within(entryFor('Haskell')).getByTestId('session-project')).toHaveTextContent('Algebra')
+  })
+
+  it('shows the refusal when a search result of an archived project is restored', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const id = await algebraWith('n-haskell')
+    await act(async () => store().archiveProject(id))
+    stubSearch(() => [{ ...THUNK_RESULT, archived: true }])
+    render(<RecentsRail />)
+    await type('thunk')
+    await settle()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include archived' }))
+    await settle()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Restore Haskell' }))
+    })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Restore the project Algebra first')
+    expect(store().graph.nodes.some((n) => n.id === 'n-haskell')).toBe(false)
+  })
+})

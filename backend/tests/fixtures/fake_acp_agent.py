@@ -38,6 +38,8 @@ class FakeAgent:
         self.sessions: dict[str, dict] = {}
         self.cancelled: dict[str, threading.Event] = {}
         self.mcp: dict[str, list] = {}
+        # --config-options: current values per session, kept in memory only.
+        self.config: dict[str, dict[str, str]] = {}
         self.next_id = 0
         self.pending: dict[int, dict] = {}
         self.pending_ready: dict[int, threading.Event] = {}
@@ -123,6 +125,40 @@ class FakeAgent:
             },
         )
 
+    def options_of(self, session_id: str) -> list[dict]:
+        """The session config options, in the shape both real agents report."""
+
+        current = self.config.setdefault(session_id, {
+            "model": "fast-1", "effort": "medium", "mode": self.options.default_mode, "fast": "off",
+        })
+        def option(oid, category, values, described=None):
+            return {"id": oid, "name": oid.title(), "category": category, "type": "select",
+                    "currentValue": current[oid],
+                    "options": [{"value": v, "name": v.title(), "description": (described or {}).get(v)} for v in values]}
+        return [
+            option("model", "model", ["fast-1", "smart-2"]),
+            option("effort", "thought_level", ["low", "medium", "high"]),
+            option("mode", "mode", ["default", "acceptEdits", "bypassPermissions", "weird-mode"],
+                   {"default": "Ask before acting", "bypassPermissions": "Never ask"}),
+            option("fast", "model_config", ["off", "on"]),
+        ]
+
+    def announce_commands(self, session_id: str) -> None:
+        self.update(session_id, {"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "compact", "description": "Summarize the conversation to free context"},
+            {"name": "context", "description": "Show context usage"},
+            {"name": "$archify", "description": "A learner's installed skill", "input": {"hint": "what to draw"}},
+        ]})
+
+    def session_set_config_option(self, request_id, params) -> None:
+        session_id = params.get("sessionId")
+        if not self.options.config_options or session_id not in self.sessions:
+            self.respond(request_id, error={"code": -32601, "message": "Method not found"})
+            return
+        self.options_of(session_id)
+        self.config[session_id][params.get("configId")] = params.get("value")
+        self.respond(request_id, {"configOptions": self.options_of(session_id)})
+
     def session_new(self, request_id, params) -> None:
         if self.options.unauthenticated:
             self.respond(request_id, error={"code": -32000, "message": "Authentication required"})
@@ -133,7 +169,12 @@ class FakeAgent:
         # its servers — and a fresh credential — again.
         self.mcp[session_id] = params.get("mcpServers") or []
         self.save(session_id)
-        self.respond(request_id, {"sessionId": session_id})
+        result = {"sessionId": session_id}
+        if self.options.config_options:
+            result["configOptions"] = self.options_of(session_id)
+        self.respond(request_id, result)
+        if self.options.config_options:
+            self.announce_commands(session_id)
 
     def session_load(self, request_id, params) -> None:
         if self.options.no_load_session:
@@ -160,7 +201,9 @@ class FakeAgent:
                     "content": {"type": "text", "text": f"replayed answer to {text}"},
                 },
             )
-        self.respond(request_id, None)
+        self.respond(request_id, {"configOptions": self.options_of(session_id)} if self.options.config_options else None)
+        if self.options.config_options:
+            self.announce_commands(session_id)
 
     def session_prompt(self, request_id, params) -> None:
         session_id = params.get("sessionId")
@@ -254,7 +297,14 @@ class FakeAgent:
             self.update(session_id, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": f"fs error {code} "}})
 
         last_line = text.strip().splitlines()[-1] if text.strip() else ""
-        if "`add_question`" in text and "multiple_choice" in text and "The learner asked:" in text:
+        if options.config_options:
+            self.update(session_id, {"sessionUpdate": "usage_update", "used": 1234, "size": 200000})
+        if options.config_options and last_line == "whoami":
+            c = self.options_of(session_id) and self.config[session_id]
+            chunks = [f"model={c['model']} effort={c['effort']} mode={c['mode']} fast={c['fast']}"]
+        elif options.config_options and last_line == "/compact":
+            chunks = ["compacted"]
+        elif "`add_question`" in text and "multiple_choice" in text and "The learner asked:" in text:
             # A /quiz command, answered the way the measured agents did: one
             # tool call per question, then a pointer rather than the questions.
             for prompt in ("Which builds a list from an iterable?", "What does [x * 2 for x in [1, 2]] give?"):
@@ -345,6 +395,7 @@ class FakeAgent:
             "session/new": self.session_new,
             "session/load": self.session_load,
             "session/prompt": self.session_prompt,
+            "session/set_config_option": self.session_set_config_option,
         }
         for raw in sys.stdin:
             try:
@@ -375,6 +426,8 @@ def parse(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chunks", type=int, default=3)
     parser.add_argument("--delay", type=float, default=0.0, help="seconds between chunks")
+    parser.add_argument("--config-options", action="store_true", help="report session config options and commands")
+    parser.add_argument("--default-mode", default="default", help="the mode a new session starts in")
     parser.add_argument("--stop-reason", default="end_turn")
     parser.add_argument("--protocol-version", type=int, default=PROTOCOL_VERSION)
     parser.add_argument("--tools", action="store_true", help="emit thought, plan, tool calls")

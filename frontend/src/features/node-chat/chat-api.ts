@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import apiClient from '../../shared/lib/api-client'
 import { postEventStream } from '../../shared/lib/sse'
-import { TurnOutcomeSchema } from '../../shared/lib/workspace-types'
+import { AgentStateSchema, TurnOutcomeSchema } from '../../shared/lib/workspace-types'
 
 /**
  * Wire contract of `POST /chat/turn` (design.md "Interfaces" → The streaming
@@ -45,6 +45,20 @@ const EVENT_SCHEMAS = {
     itemIds: z.array(z.string().min(1)),
     agentName: z.string(),
   }),
+  /**
+   * What the session runs with this turn, once choices are applied and before
+   * the agent answers (agent-session-controls). Same shape as a bootstrap
+   * node's `agentState`; an unrecognised `modeGroup` reads as `unasked`.
+   */
+  'session.state': AgentStateSchema,
+  /**
+   * A session choice the agent no longer offers was not sent. Recorded as a
+   * `settings_notice` message under `messageId`, so it is shown live and
+   * deduplicated against the record when the snapshot is re-read.
+   */
+  'settings.notice': z.object({ messageId: z.string().min(1), text: z.string() }),
+  /** Context tokens in use and the window's size, whenever the agent reports them. */
+  'context.usage': z.object({ used: z.number().nonnegative(), size: z.number().positive() }),
   'turn.ended': z.object({
     // `incomplete` never ends a turn on the wire, but accepting the whole
     // enum keeps a backend that sends it from being silently dropped.
@@ -69,6 +83,8 @@ export type PracticeDelivery = Omit<Extract<TurnEvent, { type: 'practice.deliver
 
 export type PlanEntry = Extract<TurnEvent, { type: 'plan' }>['entries'][number]
 export type TurnUsage = Omit<Extract<TurnEvent, { type: 'usage' }>, 'type'>
+export type SessionState = Omit<Extract<TurnEvent, { type: 'session.state' }>, 'type'>
+export type ContextUsage = Omit<Extract<TurnEvent, { type: 'context.usage' }>, 'type'>
 
 function isKnown(name: string): name is TurnEventName {
   return Object.prototype.hasOwnProperty.call(EVENT_SCHEMAS, name)

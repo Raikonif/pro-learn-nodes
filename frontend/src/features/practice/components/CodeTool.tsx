@@ -13,124 +13,18 @@ import {
   ToolUnavailable,
   attemptCountLabel,
   buttonSecondary,
+  cardClass,
   describeFailure,
   useIsHighlighted,
 } from './ToolStates'
 
 /**
- * The Code tool: the node's free sandbox and, when the node has any, its code
- * exercises — each solved in a buffer of its own.
- *
- * Which one is open is a view preference held per node in the practice store,
- * so a delivered exercise can be opened from outside this component.
+ * A code block's body: the node's scratch buffer (`itemId` null), or one code
+ * exercise solved in a buffer of its own. Each exercise is its own block, so
+ * there is no picker here — the workbench is the list.
  */
-function CodeTool({ nodeId }: { nodeId: string }) {
-  const material = usePracticeStore((s) => s.material[nodeId])
-  const selected = usePracticeStore((s) => s.selectedExercise[nodeId] ?? null)
-  const exercises =
-    material?.status === 'ready' ? material.items.filter((item) => item.kind === 'code_exercise') : []
-
-  return (
-    <div className="flex min-h-0 flex-col gap-2">
-      {exercises.length > 0 && (
-        <ExerciseList
-          nodeId={nodeId}
-          exercises={exercises}
-          attempts={material?.status === 'ready' ? material.attempts : []}
-          selected={selected}
-        />
-      )}
-      {selected === null ? (
-        <SandboxPanel nodeId={nodeId} />
-      ) : (
-        <ExercisePanel key={selected} nodeId={nodeId} itemId={selected} />
-      )}
-    </div>
-  )
-}
-
-function firstLine(text: string): string {
-  return text.split('\n').find((line) => line.trim() !== '')?.trim() ?? text
-}
-
-const entryClass = (active: boolean, highlighted: boolean) =>
-  `flex w-full flex-col items-start rounded border px-2 py-1 text-left text-xs transition-colors duration-700 ${
-    highlighted
-      ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-300'
-      : active
-        ? 'border-blue-500 bg-blue-50'
-        : 'border-gray-200 hover:bg-gray-50'
-  }`
-
-function ExerciseList({
-  nodeId,
-  exercises,
-  attempts,
-  selected,
-}: {
-  nodeId: string
-  exercises: PracticeItem[]
-  attempts: PracticeAttempt[]
-  selected: string | null
-}) {
-  const selectExercise = usePracticeStore((s) => s.selectExercise)
-  return (
-    <ul aria-label="Code exercises" className="flex flex-col gap-1">
-      <li>
-        <button
-          type="button"
-          aria-pressed={selected === null}
-          onClick={() => selectExercise(nodeId, null)}
-          className={entryClass(selected === null, false)}
-        >
-          <span className="font-medium text-gray-900">Free sandbox</span>
-        </button>
-      </li>
-      {exercises.map((exercise) => (
-        <ExerciseEntry
-          key={exercise.id}
-          nodeId={nodeId}
-          exercise={exercise}
-          attemptCount={attempts.filter((attempt) => attempt.itemId === exercise.id).length}
-          active={selected === exercise.id}
-          onSelect={() => selectExercise(nodeId, exercise.id)}
-        />
-      ))}
-    </ul>
-  )
-}
-
-function ExerciseEntry({
-  nodeId,
-  exercise,
-  attemptCount,
-  active,
-  onSelect,
-}: {
-  nodeId: string
-  exercise: PracticeItem
-  attemptCount: number
-  active: boolean
-  onSelect: () => void
-}) {
-  const highlighted = useIsHighlighted(nodeId, exercise.id)
-  return (
-    <li>
-      <button
-        type="button"
-        aria-pressed={active}
-        data-practice-item-id={exercise.id}
-        data-highlighted={highlighted ? 'true' : undefined}
-        onClick={onSelect}
-        className={entryClass(active, highlighted)}
-      >
-        <span className="w-full truncate font-medium text-gray-900">{firstLine(exercise.prompt)}</span>
-        <span className="text-[10px] text-gray-500">
-          {exercise.authoredBy ? `by ${exercise.authoredBy.name}` : 'You'} · {attemptCountLabel(attemptCount)}
-        </span>
-      </button>
-    </li>
-  )
+function CodeTool({ nodeId, itemId }: { nodeId: string; itemId: string | null }) {
+  return itemId === null ? <SandboxPanel nodeId={nodeId} /> : <ExercisePanel key={itemId} nodeId={nodeId} itemId={itemId} />
 }
 
 /** One exercise: its statement, its own buffer with Submit, and the latest submission. */
@@ -145,6 +39,7 @@ function ExercisePanel({ nodeId, itemId }: { nodeId: string; itemId: string }) {
   const flushSandbox = usePracticeStore((s) => s.flushSandbox)
   const submitExercise = usePracticeStore((s) => s.submitExercise)
   const [problem, setProblem] = useState<string | null>(null)
+  const highlighted = useIsHighlighted(nodeId, itemId)
 
   useEffect(() => {
     void openExerciseBuffer(nodeId, itemId)
@@ -166,7 +61,12 @@ function ExercisePanel({ nodeId, itemId }: { nodeId: string; itemId: string }) {
 
   return (
     <div className="flex min-h-0 flex-col gap-2">
-      <section aria-label="Exercise" className="flex flex-col gap-1 rounded border border-gray-200 p-2 text-xs">
+      <section
+        aria-label="Exercise"
+        data-practice-item-id={item.id}
+        data-highlighted={highlighted ? 'true' : undefined}
+        className={`flex flex-col gap-1 p-2 text-xs ${cardClass(highlighted)}`}
+      >
         <AuthorMark author={item.authoredBy} />
         <p className="whitespace-pre-wrap break-words text-gray-900">{item.prompt}</p>
         {item.expectedOutput !== null && (

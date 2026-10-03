@@ -40,6 +40,7 @@ function seedQuiz() {
     starterCode: null,
     expectedOutput: null,
     authoredBy: null,
+    deliveryId: null,
   })
 }
 

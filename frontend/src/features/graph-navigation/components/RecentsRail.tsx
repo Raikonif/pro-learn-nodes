@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
+import { ProjectsPanel, filterByProject } from '../../projects'
 import { useAgentsStore } from '../../settings'
 import { searchSessions, type SessionSearchResult } from '../../../shared/lib/workspace-api'
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
@@ -49,6 +50,7 @@ function RecentsRail({ headerAction }: RecentsRailProps) {
   const graph = useWorkspaceStore((s) => s.graph)
   const openNodeId = useWorkspaceStore((s) => s.openNodeId)
   const searchTerm = useWorkspaceStore((s) => s.searchTerm)
+  const projectFilter = useWorkspaceStore((s) => s.projectFilter)
   const setSearchTerm = useWorkspaceStore((s) => s.setSearchTerm)
   const openNode = useWorkspaceStore((s) => s.openNode)
   const openSessionAt = useWorkspaceStore((s) => s.openSessionAt)
@@ -96,8 +98,13 @@ function RecentsRail({ headerAction }: RecentsRailProps) {
     }
   }, [query, includeArchived, searchRevision])
 
-  // Grouping orders each group most recent first, so the nodes go in as they are.
-  const groups = useMemo(() => groupSessionsByDay(graph.nodes, new Date()), [graph])
+  // Grouping orders each group most recent first, so the nodes go in as they
+  // are. The project filter narrows only this listing: search, the canvas and
+  // the minimap keep showing everything.
+  const groups = useMemo(
+    () => groupSessionsByDay(filterByProject(graph.nodes, projectFilter), new Date()),
+    [graph, projectFilter],
+  )
   const latest = useMemo(() => latestMessageByNode(graph), [graph])
   const agentNames = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents])
 
@@ -127,6 +134,8 @@ function RecentsRail({ headerAction }: RecentsRailProps) {
         <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Sessions</h2>
         {headerAction}
       </div>
+
+      <ProjectsPanel />
 
       <div className="flex flex-col gap-1">
         <label htmlFor="recents-search" className="text-xs font-medium text-gray-500">
@@ -178,7 +187,9 @@ function RecentsRail({ headerAction }: RecentsRailProps) {
             <p className="text-xs text-gray-400">Searching…</p>
           )
         ) : groups.length === 0 ? (
-          <p className="text-xs text-gray-400">No sessions yet.</p>
+          <p className="text-xs text-gray-400">
+            {projectFilter === null ? 'No sessions yet.' : 'No sessions in this project yet.'}
+          </p>
         ) : (
           groups.map((group) => (
             <section key={group.key} aria-label={group.label} className="flex flex-col gap-1">
@@ -192,6 +203,7 @@ function RecentsRail({ headerAction }: RecentsRailProps) {
                     <SessionHistoryEntry
                       key={node.id}
                       node={node}
+                      showProject={projectFilter === null}
                       current={node.id === openNodeId}
                       preview={message ? previewText(message.content) : null}
                       agentName={

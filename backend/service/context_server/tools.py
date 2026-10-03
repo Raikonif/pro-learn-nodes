@@ -13,7 +13,7 @@ from typing import Any
 from mcp.server.mcpserver import Context, MCPServer
 
 from core.exceptions import NotFoundError, ValidationError
-from service import practice_service, workspace
+from service import practice_service, projects, workspace
 from service.context_server.credentials import CredentialRegistry, Scope
 from service.context_server.delivery import TOOL_OF_KIND, Delivery, DeliveryBus
 
@@ -46,14 +46,19 @@ def register_tools(mcp: MCPServer, credentials: CredentialRegistry, deliveries: 
 
     # --- Read -----------------------------------------------------------------
 
-    @mcp.tool(description="The session you are working in: its title and mode, and your own name.")
+    @mcp.tool(description="The session you are working in: its title and mode, the project it belongs to and that project's instructions, and your own name.")
     async def current_session(ctx: Context) -> dict[str, Any]:
         s = scope(ctx)
         try:
             outline = workspace.session_outline(s.workspace_id, s.node_id)
         except Exception as error:
             return refuse(error)
-        return {**outline["session"], "you": s.agent_name}
+        project = projects.node_project(s.workspace_id, s.node_id)
+        return {
+            **outline["session"],
+            "project": {"name": project["name"], "instructions": project["instructions"]},
+            "you": s.agent_name,
+        }
 
     @mcp.tool(description="The learner's sessions, most recently active first (titles only). Use search_sessions to find one by content.")
     async def list_sessions(ctx: Context, limit: int = 20) -> dict[str, Any]:

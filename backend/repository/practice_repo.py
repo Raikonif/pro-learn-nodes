@@ -69,6 +69,24 @@ def get_item(session: Session, workspace_id: str, item_id: str) -> PracticeItemR
     ).first()
 
 
+def set_delivery(
+    session: Session, workspace_id: str, node_id: str, item_ids: list[str], delivery_id: str
+) -> None:
+    """Record which delivery brought these items; ids outside the node are left alone."""
+
+    if not item_ids:
+        return
+    for item in session.exec(
+        select(PracticeItemRecord).where(
+            PracticeItemRecord.workspace_id == workspace_id,
+            PracticeItemRecord.node_id == node_id,
+            PracticeItemRecord.id.in_(item_ids),
+        )
+    ).all():
+        item.delivery_id = delivery_id
+    session.flush()
+
+
 def insert_attempt(
     session: Session,
     *,

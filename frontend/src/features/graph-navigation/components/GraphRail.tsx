@@ -11,8 +11,8 @@ import GraphMinimap from './GraphMinimap'
  */
 
 /**
- * Below this, the minimap plus the practice tools cannot both be usable —
- * a 160px minimap, its padding, and the tab strip leave nothing for a panel.
+ * Below this, the minimap plus the practice workbench cannot both be usable —
+ * a 160px minimap, its padding, and the block headers leave nothing for a block.
  */
 export const MINIMAP_MIN_HEIGHT = 320
 
@@ -21,10 +21,16 @@ export const DEFAULT_AVAILABLE_HEIGHT = 640
 
 export type GraphRailProps = {
   availableHeight?: number
+  /**
+   * The rail's owner wants the height for something else — an expanded
+   * practice block — so the breadcrumb (which still expands on hover) is
+   * enough, whatever the height.
+   */
+  collapsed?: boolean
 }
 
-function GraphRail({ availableHeight = DEFAULT_AVAILABLE_HEIGHT }: GraphRailProps) {
-  return availableHeight >= MINIMAP_MIN_HEIGHT ? <GraphMinimap /> : <GraphBreadcrumb />
+function GraphRail({ availableHeight = DEFAULT_AVAILABLE_HEIGHT, collapsed = false }: GraphRailProps) {
+  return !collapsed && availableHeight >= MINIMAP_MIN_HEIGHT ? <GraphMinimap /> : <GraphBreadcrumb />
 }
 
 export default GraphRail

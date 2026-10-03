@@ -16,11 +16,11 @@ The workspace SHALL continue to present exactly three panes while offering comma
 - **THEN** the palette's query field and its results are legible and the three panes are not reflowed
 
 ### Requirement: The left rail's node search remains alongside the command palette
-The left rail SHALL continue to provide search across nodes. The command palette SHALL NOT replace, disable, or take over that search, and left-rail search results SHALL remain nodes only even though the palette also returns commands and projects.
+The left rail SHALL continue to provide search across nodes. The command palette SHALL NOT replace, disable, or take over that search, and left-rail search results SHALL remain nodes only even though the palette also returns commands.
 
 #### Scenario: Both search surfaces remain usable
 - **WHEN** a learner searches in the left rail and then opens the command palette
-- **THEN** the left-rail search still lists matching nodes and the palette independently lists commands, nodes, and projects
+- **THEN** the left-rail search still lists matching nodes and the palette independently lists commands and nodes
 
 #### Scenario: The left rail does not gain commands
 - **WHEN** a learner enters a search term in the left rail that matches a command name

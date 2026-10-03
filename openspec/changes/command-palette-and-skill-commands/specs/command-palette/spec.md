@@ -1,11 +1,11 @@
 ## Purpose
 
-The keyboard-first overlay that searches commands, nodes, and projects in one query, giving every registry command a reachable home without adding a pane or a permanent control to the workspace.
+The keyboard-first overlay that searches commands and nodes in one query, giving every registry command a reachable home without adding a pane or a permanent control to the workspace.
 
 ## ADDED Requirements
 
 ### Requirement: The palette opens on a keyboard shortcut from anywhere in the workspace
-The workspace SHALL open the command palette when the learner presses the palette shortcut, regardless of which pane holds focus and regardless of whether a node is open. The shortcut SHALL be a single chord and SHALL be usable while the conversation composer has focus. Opening the palette SHALL NOT alter, submit, or clear any composer draft.
+The workspace SHALL open the command palette when the learner presses ⌘K on macOS or Ctrl+K elsewhere, regardless of which pane holds focus and whether a node is open. The shortcut SHALL work while the conversation composer has focus, and opening the palette SHALL NOT alter, submit, or clear any composer draft.
 
 #### Scenario: Palette opens from the graph
 - **WHEN** the learner presses the palette shortcut while the center region shows the graph
@@ -26,90 +26,68 @@ Pressing Escape while the palette is open SHALL close it, discard the query, per
 - **WHEN** the learner types a query, dismisses the palette, and reopens it
 - **THEN** the query field is empty
 
-### Requirement: The palette searches commands, nodes, and projects in one query
-A single query SHALL be matched against the registry's commands, the account's nodes, and the account's projects. Matching SHALL consider a command's name and description and a node's or project's title, and SHALL match characters appearing in order even when not adjacent, so a partial or abbreviated query still finds its target.
+### Requirement: The palette searches commands and nodes in one query
+A single query SHALL be matched against the registry's commands and the account's nodes that are not archived. Matching SHALL consider a command's title, group, and description and a node's title, and SHALL match characters appearing in order even when not adjacent, so a partial or abbreviated query still finds its target.
 
-#### Scenario: One query returns more than one kind of result
-- **WHEN** the learner types a term that matches both a skill command and a node title
-- **THEN** the palette lists both, each labelled with the category it belongs to
+#### Scenario: One query returns both kinds of result
+- **WHEN** the learner types a term that matches both a command and a node title
+- **THEN** the palette lists both, each under the category it belongs to
 
 #### Scenario: An abbreviated query matches
-- **WHEN** the learner types a query whose characters appear in order within a command's name but not adjacently
+- **WHEN** the learner types characters that appear in order, not adjacently, within a command's title
 - **THEN** that command is listed among the results
 
-### Requirement: Results are grouped into ordered categories
-Results SHALL be grouped into exactly three labelled categories rendered in the order Commands, Nodes, Projects. Within a category, results SHALL be ordered by match quality, and unavailable commands SHALL be ordered after available ones. Each category SHALL render at most a bounded number of results and SHALL indicate when its results were truncated.
+### Requirement: Results are grouped and ordered
+Results SHALL be grouped into Commands, then Nodes. Within Commands, results SHALL be ordered by match quality, available before unavailable, and each command SHALL show its group (Workspace, Practice, Session, or the agent's name). Each category SHALL render a bounded number of results and SHALL state when more matched than are shown.
 
-#### Scenario: Categories render in fixed order
-- **WHEN** a query matches commands, nodes, and projects
-- **THEN** the Commands group is rendered first, the Nodes group second, and the Projects group third
+#### Scenario: Commands come before nodes
+- **WHEN** a query matches commands and nodes
+- **THEN** the Commands category is rendered before the Nodes category
 
-#### Scenario: Unavailable commands sort last within their category
-- **WHEN** a query matches both an available and an unavailable command
-- **THEN** the available command is listed before the unavailable one
+#### Scenario: Unavailable commands sort last
+- **WHEN** a query matches an available and an unavailable command
+- **THEN** the available one is listed first, and the unavailable one shows its reason
 
 #### Scenario: Truncation is stated
 - **WHEN** a category has more matches than it renders
-- **THEN** the palette indicates that further matches were not listed
+- **THEN** the palette states how many more matched
 
-### Requirement: The empty query lists available commands before recent destinations
-With an empty query the palette SHALL list the commands currently available, then the account's recently opened nodes in recency order, then its projects. The palette SHALL NOT open on an empty result set while any command is available.
+### Requirement: The empty query lists available commands before recent nodes
+With an empty query the palette SHALL list the currently available commands, then the account's most recently active nodes other than the open one.
 
 #### Scenario: Opening the palette reveals what can be done
 - **WHEN** the learner opens the palette and types nothing
-- **THEN** the currently available commands are listed first, followed by recently opened nodes and then projects
-
-#### Scenario: A learner discovers an installed skill without knowing its name
-- **WHEN** a learner who has just installed a skill opens the palette with a node open and types nothing
-- **THEN** that skill's commands are listed among the available commands
+- **THEN** available commands are listed first, followed by recently active nodes
 
 ### Requirement: The palette is fully operable from the keyboard
-The palette SHALL support moving the highlight to the next and previous result with the arrow keys, traversing across category boundaries without a separate keystroke, and activating the highlighted result with Enter. The first available result SHALL be highlighted whenever the result set changes. Activating a result SHALL close the palette before its effect is applied.
+The arrow keys SHALL move the highlight to the next and previous result across category boundaries, and Enter SHALL activate the highlighted result. The first result SHALL be highlighted whenever the result set changes. Activating a result SHALL close the palette before its effect applies; activating a node SHALL open it.
 
-#### Scenario: Arrow keys cross category boundaries
-- **WHEN** the highlight is on the last result of the Commands group and the learner presses the down arrow
-- **THEN** the highlight moves to the first result of the Nodes group
+#### Scenario: Arrow keys cross categories
+- **WHEN** the highlight is on the last command and the learner presses the down arrow
+- **THEN** the highlight moves to the first node
 
-#### Scenario: Enter activates the highlighted result
-- **WHEN** the learner presses Enter while a node result is highlighted
+#### Scenario: Enter opens a node
+- **WHEN** the learner presses Enter while a node is highlighted
 - **THEN** the palette closes and that node opens in the center region
 
-#### Scenario: Highlight resets as the query narrows
-- **WHEN** the learner types a further character that changes the result set
-- **THEN** the first available result of the new set is highlighted
+#### Scenario: Enter on an unavailable command does nothing
+- **WHEN** the learner presses Enter while an unavailable command is highlighted
+- **THEN** the palette stays open and nothing runs
 
 ### Requirement: A query with no match says so and does nothing
-When a query matches no command, node, or project, the palette SHALL state that nothing matched and SHALL leave Enter without effect. The palette SHALL NOT create a node, a project, or a command from an unmatched query.
+When a query matches nothing, the palette SHALL state that nothing matched and Enter SHALL have no effect. The palette SHALL NOT create a node or a command from an unmatched query.
 
-#### Scenario: No results reported
-- **WHEN** the learner types a query matching nothing
-- **THEN** the palette states that nothing matched
+#### Scenario: Nothing matched
+- **WHEN** the learner types a query matching nothing and presses Enter
+- **THEN** the palette states that nothing matched, stays open, and nothing is created
 
-#### Scenario: Enter on an empty result set is inert
-- **WHEN** the learner presses Enter while nothing matched
-- **THEN** the palette stays open, nothing is created, and no command runs
-
-### Requirement: The palette is an overlay, never a pane
-The palette SHALL render above the workspace as a dismissible overlay and SHALL NOT occupy or displace the left rail, the center region, or the right rail. The workspace SHALL remain in the state it was in when the palette opened, and dismissing the palette SHALL reveal it unchanged.
-
-#### Scenario: The panes survive the palette
-- **WHEN** the palette is open over a workspace with a node open
-- **THEN** the left rail, the center conversation, and the right rail retain their content and the palette obscures rather than replaces them
-
-### Requirement: The palette requires an active account
-The palette SHALL be available only while an account is active. While no account is active the palette shortcut SHALL have no effect and no palette SHALL render.
+### Requirement: The palette requires an active account and shows only its nodes
+The palette SHALL exist only while an account is active; while signed out the shortcut SHALL have no effect. Node results SHALL come only from the active account.
 
 #### Scenario: The shortcut is inert while signed out
 - **WHEN** the learner presses the palette shortcut on the sign-in surface
-- **THEN** no palette opens and the sign-in surface is unchanged
-
-#### Scenario: Signing out closes an open palette
-- **WHEN** the active account is signed out while the palette is open
-- **THEN** the palette closes and the root view becomes the sign-in surface
-
-### Requirement: Palette results are confined to the active account
-Node and project results SHALL be drawn only from the active account's data. No node or project belonging to another enrolled account SHALL appear in results, and switching accounts SHALL replace the result set entirely.
+- **THEN** no palette opens
 
 #### Scenario: Another account's nodes are absent
-- **WHEN** a learner signs in as a second account and searches the palette for a node title created under the first account
+- **WHEN** a learner signs in as a second account and searches for a node title created under the first
 - **THEN** that node is not listed

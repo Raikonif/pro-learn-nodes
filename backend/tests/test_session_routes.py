@@ -92,8 +92,14 @@ async def test_another_accounts_session_is_answered_as_missing(tmp_path):
 
 
 def test_no_route_deletes_a_session():
-    """The history archives; it never deletes."""
+    """The history archives; it never deletes.
+
+    The one DELETE is a project's, which moves its sessions to the default
+    project instead of removing them (`tests/test_projects.py`).
+    """
 
     for route in workspace_router.routes:
         assert isinstance(route, APIRoute)
+        if route.path == "/workspace/projects/{project_id}":
+            continue
         assert "DELETE" not in route.methods, route.path

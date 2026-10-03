@@ -36,6 +36,7 @@ function seedQuestion(prompt: string, referenceAnswer: string | null = null) {
     starterCode: null,
     expectedOutput: null,
     authoredBy: null,
+    deliveryId: null,
   })
 }
 
@@ -99,6 +100,7 @@ describe('QuestionsTool — authoring', () => {
       starterCode: null,
       expectedOutput: null,
       authoredBy: null,
+      deliveryId: null,
     })
     await renderTool()
 

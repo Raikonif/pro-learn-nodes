@@ -55,6 +55,10 @@ class WorkspaceNodeRecord(SQLModel, table=True):
     # (`repository/agent_repo.py:remove`), and adding a constrained column to
     # an existing SQLite table would mean rebuilding it.
     backend_agent_id: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    # The learner's choices for the session's agent ({model?, effort?, fast?,
+    # mode?}, values only), and what its last turn actually ran with.
+    agent_settings: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    agent_state: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     # Where the title came from, so an automatic title never overwrites one a
     # learner chose: "provisional" (a quick start, awaiting its first
     # message), "auto" (derived from that message), "topic", or "learner".
@@ -64,6 +68,13 @@ class WorkspaceNodeRecord(SQLModel, table=True):
     # Retired, not deleted: hidden from the history and the graph, restorable.
     # The column `node-projects-and-archive` specifies, pulled forward.
     archived_at: datetime | None = Field(default=None, nullable=True)
+    # The one project this node belongs to. Membership, never reachability: a
+    # link may join nodes of different projects and nothing compares the ends.
+    project_id: str = Field(foreign_key="projects.id", nullable=False, index=True)
+    # Set only on a node archived as a consequence of its project being
+    # archived, so restoring the project restores exactly those nodes and
+    # leaves one that was archived on its own alone.
+    archived_with_project_id: str | None = Field(default=None, nullable=True)
     created_at: datetime = Field(default_factory=now, nullable=False)
     last_opened_at: datetime = Field(default_factory=now, nullable=False)
     # Bumped when the node is opened and whenever a message is recorded in any
@@ -129,6 +140,12 @@ class AgentSessionRecord(SQLModel, table=True):
     agent_id: str = Field(sa_column=Column(String, nullable=False))
     session_id: str = Field(sa_column=Column(String, nullable=False))
     synced_through: datetime | None = Field(default=None, nullable=True)
+    # The project context this agent session was last told ({projectId, name,
+    # instructions}), or null when it has been told nothing. What a turn
+    # compares against to say a change once and never repeat it.
+    project_context: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON(none_as_null=True), nullable=True)
+    )
 
 
 class ChatMessageRecord(SQLModel, table=True):

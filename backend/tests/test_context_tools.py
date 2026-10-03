@@ -207,3 +207,22 @@ async def test_a_title_is_set_only_when_no_one_chose_it(world):
     assert "chosen by the learner" in refused["error"]
     with session_scope() as session:
         assert session.get(WorkspaceNodeRecord, world["node"]).title == "My name"
+
+
+async def test_current_session_reports_the_project_and_its_instructions(world):
+    from service import projects
+
+    graph = projects.create(world["ws"], "Algebra")["graph"]
+    project = next(p["id"] for p in graph["projects"] if p["name"] == "Algebra")
+    projects.update(world["ws"], project, instructions="Use examples first.")
+    projects.move_node(world["ws"], world["node"], project)
+
+    current = await world["call"]("current_session")
+
+    assert current["project"] == {"name": "Algebra", "instructions": "Use examples first."}
+
+
+async def test_current_session_names_the_default_project_when_none_was_chosen(world):
+    current = await world["call"]("current_session")
+
+    assert current["project"] == {"name": "General", "instructions": ""}

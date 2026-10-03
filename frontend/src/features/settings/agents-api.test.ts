@@ -4,6 +4,7 @@ import { ApiHttpError, ApiValidationError } from '../../shared/lib/api-client'
 
 import {
   AgentRegistrationError,
+  fetchAgentOffer,
   listAgents,
   registerAgent,
   removeAgent,
@@ -122,5 +123,69 @@ describe('agents api', () => {
     await expect(testAgent('agent-1')).resolves.toEqual(result)
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/agents/agent-1/test')
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST')
+  })
+})
+
+describe('agent offer (agent-session-controls 4.1)', () => {
+  const OFFER = {
+    known: true,
+    model: {
+      id: 'model',
+      name: 'Model',
+      current: 'gpt-6-sol',
+      values: [
+        { value: 'gpt-6-sol', name: 'GPT-6 Sol', description: null },
+        { value: 'gpt-6-luna', name: 'GPT-6 Luna', description: 'Lighter' },
+      ],
+    },
+    effort: null,
+    fast: { id: 'fast-mode', name: 'Fast', current: 'off', values: [{ value: 'on', name: 'On', description: null }, { value: 'off', name: 'Off', description: null }] },
+    mode: {
+      id: 'mode',
+      name: 'Mode',
+      current: 'agent',
+      values: [
+        { value: 'agent', name: 'Agent', description: 'Asks first', group: 'asks' },
+        { value: 'agent-full-access', name: 'Full access', description: null, group: 'unasked' },
+      ],
+    },
+    commands: [{ name: '$archify', description: 'Draw diagrams', inputHint: null }],
+  }
+
+  it('reads the offer of one agent', async () => {
+    const fetchMock = stubFetch(OFFER)
+
+    const offer = await fetchAgentOffer('agent 1')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/agents/agent%201/offer', { method: 'GET' })
+    expect(offer.known).toBe(true)
+    expect(offer.model?.values.map((v) => v.value)).toEqual(['gpt-6-sol', 'gpt-6-luna'])
+    expect(offer.commands).toEqual([{ name: '$archify', description: 'Draw diagrams', inputHint: null }])
+  })
+
+  it('reads an unknown offer, and fills absent optional fields leniently', async () => {
+    stubFetch({ known: false, model: null, effort: null, fast: null, mode: null })
+
+    const offer = await fetchAgentOffer('agent-1')
+
+    expect(offer).toEqual({ known: false, model: null, effort: null, fast: null, mode: null, commands: [] })
+  })
+
+  it('treats a mode value without a recognised group as acting without asking', async () => {
+    stubFetch({
+      ...OFFER,
+      mode: {
+        ...OFFER.mode,
+        values: [
+          { value: 'agent', name: 'Agent', description: null, group: 'asks' },
+          { value: 'mystery', name: 'Mystery', description: null },
+          { value: 'weird', name: 'Weird', description: null, group: 'sideways' },
+        ],
+      },
+    })
+
+    const offer = await fetchAgentOffer('agent-1')
+
+    expect(offer.mode?.values.map((v) => v.group)).toEqual(['asks', 'unasked', 'unasked'])
   })
 })

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
-import { revealPractice } from '../index'
+import { revealDelivery } from '../index'
 import { createFakePracticeBackend, type FakePracticeBackend } from '../practice-fake-backend'
 import { PRACTICE_HIGHLIGHT_MS, SANDBOX_SAVE_DELAY_MS, usePracticeStore } from '../practice-store'
 import type { RunResult } from '../sandbox'
@@ -52,7 +52,10 @@ let backend: FakePracticeBackend
 beforeEach(() => {
   backend = createFakePracticeBackend()
   vi.stubGlobal('fetch', vi.fn(backend.fetch))
+  localStorage.clear()
   usePracticeStore.getState().discard()
+  // discard() keeps arrangements by design (they are this device's view).
+  usePracticeStore.setState({ arrangements: {} })
   useWorkspaceStore.getState().reset()
   nextRun.result = { output: [], outcome: { kind: 'completed' }, outputTruncated: false }
   Element.prototype.scrollIntoView = vi.fn()
@@ -71,21 +74,48 @@ function renderRailOn(nodeId: string) {
   return render(<PracticeRail />)
 }
 
-function selectTab(name: string) {
-  fireEvent.click(screen.getByRole('tab', { name }))
+function listedBlocks(): string[] {
+  return screen.queryAllByTestId('practice-block').map((li) => li.getAttribute('data-block-key') ?? '')
+}
+
+function blockEntry(key: string): HTMLElement {
+  const entry = screen
+    .queryAllByTestId('practice-block')
+    .find((li) => li.getAttribute('data-block-key') === key)
+  if (!entry) throw new Error(`no block ${key}; listed: ${listedBlocks().join(', ')}`)
+  return entry
+}
+
+function blockHeader(key: string): HTMLElement {
+  const header = blockEntry(key).querySelector<HTMLElement>('button[aria-expanded]')
+  if (!header) throw new Error(`block ${key} has no header`)
+  return header
+}
+
+/** The header row carries the delivery highlight while it lasts. */
+function blockHighlighted(key: string): boolean {
+  return blockEntry(key).querySelector('[data-highlighted="true"]') !== null
 }
 
 const CODEX = { agentId: 'agent-codex', name: 'Codex' }
 
 describe('PracticeRail — who wrote an item (6.2)', () => {
-  it("marks an agent's question with its name and the learner's with none", async () => {
+  it("marks an agent's question with its name and the learner's with none, each in its own block", async () => {
     backend.addItem('node-a', { kind: 'free_response', prompt: 'Mine?' })
-    backend.addItem('node-a', { kind: 'free_response', prompt: 'Theirs?', authoredBy: CODEX })
+    backend.addItem('node-a', { kind: 'free_response', prompt: 'Theirs?', authoredBy: CODEX, deliveryId: 'msg-1' })
     renderRailOn('node-a')
 
-    const theirs = await screen.findByRole('article', { name: 'Theirs?' })
+    await screen.findByRole('list', { name: 'Practice blocks' })
+    expect(listedBlocks()).toEqual(['delivery:msg-1', 'mine:qa'])
+    expect(blockHeader('delivery:msg-1')).toHaveAccessibleName(/by Codex/)
+    expect(blockHeader('mine:qa')).not.toHaveAccessibleName(/by /)
+
+    const theirs = screen.getByRole('article', { name: 'Theirs?' })
     expect(within(theirs).getByTestId('item-author')).toHaveTextContent('by Codex')
-    expect(within(screen.getByRole('article', { name: 'Mine?' })).queryByTestId('item-author')).toBeNull()
+
+    fireEvent.click(blockHeader('mine:qa'))
+    const mine = screen.getByRole('article', { name: 'Mine?' })
+    expect(within(mine).queryByTestId('item-author')).toBeNull()
   })
 
   it("marks an agent's quiz question with its name", async () => {
@@ -97,60 +127,52 @@ describe('PracticeRail — who wrote an item (6.2)', () => {
         { text: 'b', correct: false },
       ],
       authoredBy: { agentId: null, name: 'Claude' },
+      deliveryId: 'msg-1',
     })
     renderRailOn('node-a')
-    selectTab('Quiz')
 
     const card = await screen.findByRole('article', { name: 'Pick one' })
     expect(within(card).getByTestId('item-author')).toHaveTextContent('by Claude')
   })
 })
 
-describe('PracticeRail — the Code tool lists exercises (4c.5)', () => {
-  it('shows only the free sandbox while the node has no exercises', async () => {
-    renderRailOn('node-a')
-    selectTab('Code')
-
-    await screen.findByTestId('sandbox-tool')
-    expect(screen.queryByRole('list', { name: 'Code exercises' })).toBeNull()
-  })
-
-  it("lists each exercise's statement, author and attempts beside the free sandbox", async () => {
-    backend.addItem('node-a', {
+describe('PracticeRail — each code exercise is its own block (4c.5)', () => {
+  it('lists each exercise as a block of its own, never grouped by delivery', async () => {
+    const first = backend.addItem('node-a', {
       kind: 'code_exercise',
       prompt: 'Sum 1..10\nPrint the total.',
       starterCode: 'total = 0\n',
       authoredBy: CODEX,
+      deliveryId: 'msg-1',
     })
-    backend.addItem('node-a', { kind: 'code_exercise', prompt: 'Reverse a list', starterCode: '' })
+    const second = backend.addItem('node-a', {
+      kind: 'code_exercise',
+      prompt: 'Reverse a list',
+      starterCode: '',
+      authoredBy: CODEX,
+      deliveryId: 'msg-1',
+    })
     renderRailOn('node-a')
-    selectTab('Code')
 
-    const list = await screen.findByRole('list', { name: 'Code exercises' })
-    const entries = within(list).getAllByRole('button')
-    expect(entries.map((entry) => entry.textContent)).toEqual([
-      'Free sandbox',
-      'Sum 1..10by Codex · 0 attempts',
-      'Reverse a listYou · 0 attempts',
-    ])
-    // The free sandbox is what is open until an exercise is chosen.
-    expect(within(list).getByRole('button', { name: 'Free sandbox' })).toHaveAttribute('aria-pressed', 'true')
+    await screen.findByRole('list', { name: 'Practice blocks' })
+    expect(listedBlocks()).toEqual([`exercise:${second.id}`, `exercise:${first.id}`])
+    expect(blockHeader(`exercise:${first.id}`)).toHaveAccessibleName('Code: Sum 1..10, by Codex, not submitted')
   })
 
-  it("opens an exercise with its full statement, expected output, and its starter code", async () => {
+  it('opens an exercise with its full statement, expected output, and its starter code', async () => {
     backend.node('node-a').code = 'free_code()'
-    backend.addItem('node-a', {
+    const item = backend.addItem('node-a', {
       kind: 'code_exercise',
       prompt: 'Sum 1..10\nPrint the total.',
       starterCode: 'total = 0\n',
       expectedOutput: '55',
       authoredBy: CODEX,
+      deliveryId: 'msg-1',
     })
     renderRailOn('node-a')
-    selectTab('Code')
 
-    fireEvent.click(await screen.findByRole('button', { name: /Sum 1\.\.10/ }))
-
+    await screen.findByRole('list', { name: 'Practice blocks' })
+    expect(blockHeader(`exercise:${item.id}`)).toHaveAttribute('aria-expanded', 'true')
     const exercise = screen.getByRole('region', { name: 'Exercise' })
     expect(exercise).toHaveTextContent('Sum 1..10 Print the total.')
     expect(within(exercise).getByTestId('expected-output')).toHaveTextContent('55')
@@ -162,10 +184,11 @@ describe('PracticeRail — the Code tool lists exercises (4c.5)', () => {
     backend.node('node-a').code = 'free_code()'
     const item = backend.addItem('node-a', { kind: 'code_exercise', prompt: 'Sum', starterCode: 'start' })
     renderRailOn('node-a')
-    selectTab('Code')
+    await screen.findByRole('list', { name: 'Practice blocks' })
+    expect(listedBlocks()).toEqual([`exercise:${item.id}`, 'scratch'])
 
-    fireEvent.click(await screen.findByRole('button', { name: /^Sum/ }))
     const editor = await screen.findByRole('textbox', { name: 'Code' })
+    expect(editor).toHaveValue('start')
     fireEvent.change(editor, { target: { value: 'solution()' } })
     await waitFor(
       () =>
@@ -175,10 +198,11 @@ describe('PracticeRail — the Code tool lists exercises (4c.5)', () => {
       { timeout: SANDBOX_SAVE_DELAY_MS * 4 },
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Free sandbox' }))
+    fireEvent.click(blockHeader('scratch'))
+    expect(blockHeader(`exercise:${item.id}`)).toHaveAttribute('aria-expanded', 'false')
     expect(await screen.findByRole('textbox', { name: 'Code' })).toHaveValue('free_code()')
 
-    fireEvent.click(screen.getByRole('button', { name: /^Sum/ }))
+    fireEvent.click(blockHeader(`exercise:${item.id}`))
     expect(await screen.findByRole('textbox', { name: 'Code' })).toHaveValue('solution()')
     expect(backend.requestsTo('PUT', /\/sandbox$/)).toHaveLength(0)
   })
@@ -191,8 +215,6 @@ describe('PracticeRail — the Code tool lists exercises (4c.5)', () => {
       expectedOutput: '55',
     })
     renderRailOn('node-a')
-    selectTab('Code')
-    fireEvent.click(await screen.findByRole('button', { name: /^Sum/ }))
     await screen.findByRole('textbox', { name: 'Code' })
     nextRun.result = {
       output: [{ stream: 'stdout', text: '55\n' }],
@@ -211,14 +233,12 @@ describe('PracticeRail — the Code tool lists exercises (4c.5)', () => {
     expect(
       backend.requestsTo('POST', new RegExp(`/items/${item.id}/attempts$`)).map((r) => r.body),
     ).toEqual([{ code: 'print(55)', runOutcome: 'completed', runOutput: '55\n' }])
-    expect(screen.getByRole('button', { name: /^Sum/ })).toHaveTextContent('1 attempt')
+    expect(blockHeader(`exercise:${item.id}`)).toHaveAccessibleName('Code: Sum, submitted · output matched')
   })
 
   it('claims no match either way when the exercise has no expected output', async () => {
-    backend.addItem('node-a', { kind: 'code_exercise', prompt: 'Explore', starterCode: 'print(1)' })
+    const item = backend.addItem('node-a', { kind: 'code_exercise', prompt: 'Explore', starterCode: 'print(1)' })
     renderRailOn('node-a')
-    selectTab('Code')
-    fireEvent.click(await screen.findByRole('button', { name: /^Explore/ }))
     await screen.findByRole('textbox', { name: 'Code' })
     nextRun.result = {
       output: [{ stream: 'stdout', text: '1\n' }],
@@ -230,13 +250,15 @@ describe('PracticeRail — the Code tool lists exercises (4c.5)', () => {
 
     const latest = await screen.findByRole('region', { name: 'Latest submission' })
     expect(latest).not.toHaveTextContent(/match/i)
+    expect(blockHeader(`exercise:${item.id}`)).toHaveAccessibleName('Code: Explore, submitted')
   })
 })
 
 describe('PracticeRail — delivered practice is revealed (4c.3)', () => {
-  it('switches to Quiz, shows the newly delivered questions, and highlights them', async () => {
+  it('expands the delivery’s quiz block, shows the new questions, and highlights them', async () => {
+    backend.addItem('node-a', { kind: 'free_response', prompt: 'Earlier?' })
     renderRailOn('node-a')
-    await screen.findByText('This node has no questions yet.')
+    await screen.findByRole('article', { name: 'Earlier?' })
 
     const delivered = backend.addItem('node-a', {
       kind: 'multiple_choice',
@@ -246,43 +268,110 @@ describe('PracticeRail — delivered practice is revealed (4c.3)', () => {
         { text: 'folds left', correct: false },
       ],
       authoredBy: CODEX,
+      deliveryId: 'msg-7',
     })
-    act(() => revealPractice({ nodeId: 'node-a', tool: 'quiz', itemIds: [delivered.id] }))
+    act(() => revealDelivery({ nodeId: 'node-a', tool: 'quiz', messageId: 'msg-7', itemIds: [delivered.id] }))
 
-    expect(screen.getByRole('tab', { name: 'Quiz' })).toHaveAttribute('aria-selected', 'true')
     const card = await screen.findByRole('article', { name: 'What does foldr do?' })
     expect(card).toHaveAttribute('data-highlighted', 'true')
+    expect(blockHeader('delivery:msg-7')).toHaveAttribute('aria-expanded', 'true')
+    expect(blockHeader('mine:qa')).toHaveAttribute('aria-expanded', 'false')
+    expect(blockHighlighted('delivery:msg-7')).toBe(true)
+    expect(blockHighlighted('mine:qa')).toBe(false)
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
   })
 
+  it('reopens and expands a closed delivery’s block, highlighted', async () => {
+    const delivered = backend.addItem('node-a', {
+      kind: 'multiple_choice',
+      prompt: 'Closed one',
+      options: [
+        { text: 'a', correct: true },
+        { text: 'b', correct: false },
+      ],
+      authoredBy: CODEX,
+      deliveryId: 'msg-1',
+    })
+    backend.addItem('node-a', { kind: 'free_response', prompt: 'Still open?' })
+    renderRailOn('node-a')
+    await screen.findByRole('list', { name: 'Practice blocks' })
+    fireEvent.click(screen.getByRole('button', { name: 'Close Quiz: Closed one' }))
+    expect(listedBlocks()).toEqual(['mine:qa'])
+
+    act(() => revealDelivery({ nodeId: 'node-a', tool: 'quiz', messageId: 'msg-1', itemIds: [delivered.id] }))
+
+    await waitFor(() => expect(listedBlocks()).toContain('delivery:msg-1'))
+    expect(blockHeader('delivery:msg-1')).toHaveAttribute('aria-expanded', 'true')
+    expect(blockHighlighted('delivery:msg-1')).toBe(true)
+    expect(screen.getByRole('article', { name: 'Closed one' })).toHaveAttribute('data-highlighted', 'true')
+    expect(screen.queryByRole('button', { name: /^Closed \(/ })).not.toBeInTheDocument()
+  })
+
   it('lets the highlight fade', async () => {
-    const delivered = backend.addItem('node-a', { kind: 'free_response', prompt: 'Why?' })
+    const delivered = backend.addItem('node-a', {
+      kind: 'free_response',
+      prompt: 'Why?',
+      authoredBy: CODEX,
+      deliveryId: 'msg-1',
+    })
     renderRailOn('node-a')
     await screen.findByRole('article', { name: 'Why?' })
     vi.useFakeTimers()
 
-    act(() => revealPractice({ nodeId: 'node-a', tool: 'qa', itemIds: [delivered.id] }))
+    act(() => revealDelivery({ nodeId: 'node-a', tool: 'qa', messageId: 'msg-1', itemIds: [delivered.id] }))
     expect(screen.getByRole('article', { name: 'Why?' })).toHaveAttribute('data-highlighted', 'true')
+    expect(blockHighlighted('delivery:msg-1')).toBe(true)
 
     await act(async () => vi.advanceTimersByTimeAsync(PRACTICE_HIGHLIGHT_MS))
     expect(screen.getByRole('article', { name: 'Why?' })).not.toHaveAttribute('data-highlighted')
+    expect(blockHighlighted('delivery:msg-1')).toBe(false)
   })
 
-  it('opens a delivered exercise in Code with its starter code', async () => {
+  it('opens a delivered exercise in its own code block with its starter code', async () => {
+    backend.addItem('node-a', { kind: 'free_response', prompt: 'Earlier?' })
     renderRailOn('node-a')
-    await screen.findByText('This node has no questions yet.')
+    await screen.findByRole('article', { name: 'Earlier?' })
 
     const delivered = backend.addItem('node-a', {
       kind: 'code_exercise',
       prompt: 'Write fib',
       starterCode: 'def fib(n):\n    pass\n',
       authoredBy: CODEX,
+      deliveryId: 'msg-9',
     })
-    act(() => revealPractice({ nodeId: 'node-a', tool: 'code', itemIds: [delivered.id] }))
+    act(() => revealDelivery({ nodeId: 'node-a', tool: 'code', messageId: 'msg-9', itemIds: [delivered.id] }))
 
-    expect(screen.getByRole('tab', { name: 'Code' })).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByRole('region', { name: 'Exercise' })).toHaveTextContent('Write fib')
     expect(await screen.findByRole('textbox', { name: 'Code' })).toHaveValue('def fib(n):\n    pass\n')
-    expect(screen.getByRole('button', { name: /^Write fib/ })).toHaveAttribute('data-highlighted', 'true')
+    expect(blockHeader(`exercise:${delivered.id}`)).toHaveAttribute('aria-expanded', 'true')
+    expect(blockHighlighted(`exercise:${delivered.id}`)).toBe(true)
+  })
+
+  it('practice revealed for a node not on screen leaves this node’s workbench as it was', async () => {
+    backend.addItem('node-a', { kind: 'free_response', prompt: 'Here?' })
+    renderRailOn('node-a')
+    await screen.findByRole('article', { name: 'Here?' })
+
+    const elsewhere = backend.addItem('node-b', {
+      kind: 'multiple_choice',
+      prompt: 'Elsewhere',
+      options: [
+        { text: 'a', correct: true },
+        { text: 'b', correct: false },
+      ],
+      authoredBy: CODEX,
+      deliveryId: 'msg-b',
+    })
+    act(() => revealDelivery({ nodeId: 'node-b', tool: 'quiz', messageId: 'msg-b', itemIds: [elsewhere.id] }))
+
+    expect(listedBlocks()).toEqual(['mine:qa'])
+    expect(blockHeader('mine:qa')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByRole('article', { name: 'Elsewhere' })).not.toBeInTheDocument()
+
+    act(() => {
+      useWorkspaceStore.setState({ openNodeId: 'node-b' })
+    })
+    await waitFor(() => expect(listedBlocks()).toEqual(['delivery:msg-b']))
+    expect(blockHeader('delivery:msg-b')).toHaveAttribute('aria-expanded', 'true')
   })
 })

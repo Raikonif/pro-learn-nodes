@@ -38,6 +38,9 @@ class PracticeItemRecord(SQLModel, table=True):
     # its author after that agent's registration is removed.
     authored_by_agent_id: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     authored_by_name: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    # The `practice_delivered` message this item arrived with; null for the
+    # learner's own items. Not a foreign key — messages are never deleted.
+    delivery_id: str | None = Field(default=None, sa_column=Column(String, nullable=True, index=True))
     created_at: datetime = Field(default_factory=now, nullable=False)
 
 

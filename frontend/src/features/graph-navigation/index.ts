@@ -6,6 +6,7 @@ export { default as GraphChatCard } from './components/GraphChatCard'
 export { default as GraphMinimap } from './components/GraphMinimap'
 export { default as GraphBreadcrumb } from './components/GraphBreadcrumb'
 export { default as GraphRail } from './components/GraphRail'
+export { default as GraphProjectRegion } from './components/GraphProjectRegion'
 export type { GraphCanvasProps, GraphCanvasVariant } from './components/GraphCanvas'
 export {
   GRAPH_NODE_HEIGHT,
@@ -13,6 +14,7 @@ export {
   GRAPH_NODE_WIDTH,
   GRAPH_RANK_SEPARATION,
   layoutGraph,
+  projectRegions,
   toReactFlowGraph,
   workspaceGraphToReactFlow,
 } from './components/graph-adapter'
@@ -23,6 +25,8 @@ export type {
   GraphFlowNode,
   GraphLayout,
   GraphNodeData,
+  GraphRegionData,
+  GraphRegionNode,
   PositionedGraphNode,
   ReactFlowGraph,
   ReactFlowGraphOptions,

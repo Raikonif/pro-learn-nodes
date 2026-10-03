@@ -34,6 +34,7 @@ from api.dependencies.auth import (
     require_workspace_scope,
 )
 from api.routes.workspace import router as workspace_router
+from repository import project_repo
 from core.database import configure_database, database_path, session_scope
 from core.migrations import migrate_database
 from core.secrets import InMemorySecretStore
@@ -219,6 +220,7 @@ async def test_another_accounts_data_is_refused_exactly_as_absent_data_is(
         with session_scope() as session:
             hidden = WorkspaceNodeRecord(
                 workspace_id=_workspace_id_of(other.id),
+                project_id=project_repo.default_for(session, _workspace_id_of(other.id)).id,
                 title="Someone else's node",
                 mode="Explore",
             )
@@ -283,4 +285,4 @@ async def test_every_workspace_route_refuses_while_signed_out(
 def test_the_signed_out_test_covers_the_whole_router():
     """A guard on the guard: an empty enumeration would pass silently."""
 
-    assert len(_workspace_requests()) == len(workspace_router.routes) == 16
+    assert len(_workspace_requests()) == len(workspace_router.routes) == 24

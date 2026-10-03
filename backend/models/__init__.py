@@ -1,6 +1,7 @@
 """Persistent SQLModel entities owned by the local sidecar."""
 
 from models.agent import AgentRegistrationRecord
+from models.project import ProjectRecord
 from models.workspace import (
     AgentSessionRecord,
     ChatMessageRecord,
@@ -20,6 +21,7 @@ __all__ = [
     "ChatMessageRecord",
     "ChatThreadRecord",
     "NodeLinkRecord",
+    "ProjectRecord",
     "SelectionAnchorRecord",
     "SourceChunkRecord",
     "SourceRecord",

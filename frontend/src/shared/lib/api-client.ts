@@ -233,6 +233,21 @@ const apiClient = {
       options,
     )
   },
+  patch<S extends z.ZodTypeAny>(
+    path: string,
+    body: unknown,
+    options: RequestOptions<S>,
+  ): Promise<z.infer<S>> {
+    return request(
+      path,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      options,
+    )
+  },
   delete<S extends z.ZodTypeAny>(path: string, options: RequestOptions<S>): Promise<z.infer<S>> {
     return request(path, { method: 'DELETE' }, options)
   },

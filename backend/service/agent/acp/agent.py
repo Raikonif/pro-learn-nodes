@@ -31,6 +31,11 @@ from pydantic import ValidationError
 from service.agent.acp import wire
 from service.agent.acp.connection import AcpConnection, RpcError
 from service.agent.contract import (
+    AgentError,
+    AvailableCommand,
+    ConfigOption,
+    ConfigValue,
+    ContextUsage,
     McpServer,
     AgentCommand,
     AgentError,
@@ -88,6 +93,10 @@ class AcpAgent:
         self._connection: AcpConnection | None = None
         self._negotiation: Negotiation | None = None
         self._turns: dict[str, asyncio.Queue[Any]] = {}
+        # Per session, kept whether or not a turn is running: commands are
+        # announced right after `session/new`, before any prompt.
+        self._options: dict[str, list[ConfigOption]] = {}
+        self._commands: dict[str, list[AvailableCommand]] = {}
         self._request_timeout = request_timeout
         self._idle_timeout = idle_timeout
         self._kill_grace = kill_grace
@@ -195,7 +204,9 @@ class AcpAgent:
                 ) from error
             raise SessionOpenFailed(f"The agent could not open a session: {error.message}") from error
         try:
-            return wire.NewSessionResult.model_validate(raw).session_id
+            session_id = wire.NewSessionResult.model_validate(raw).session_id
+            self._remember_options(session_id, raw)
+            return session_id
         except ValidationError as error:
             raise SessionOpenFailed(f"The agent's session/new answer is malformed: {error}") from error
 
@@ -210,9 +221,10 @@ class AcpAgent:
         # No turn is registered for `session_id`, so the history the agent
         # replays while loading falls through `_on_notification` unrecorded.
         try:
-            await self._require_connection().request(
+            loaded = await self._require_connection().request(
                 "session/load", params, timeout=self._request_timeout
             )
+            self._remember_options(session_id, loaded)
         except RpcError as error:
             if _is_auth_error(error):
                 raise AgentNotAuthenticated(
@@ -290,6 +302,31 @@ class AcpAgent:
         if self._connection is not None:
             await self._connection.close(grace=self._kill_grace)
 
+    # --- contract: session controls ------------------------------------
+
+    def config_options(self, session_id: str) -> list[ConfigOption]:
+        return list(self._options.get(session_id, []))
+
+    def available_commands(self, session_id: str) -> list[AvailableCommand]:
+        return list(self._commands.get(session_id, []))
+
+    async def set_config_option(self, session_id: str, option_id: str, value: str) -> list[ConfigOption]:
+        try:
+            answer = await self._require_connection().request(
+                "session/set_config_option",
+                {"sessionId": session_id, "configId": option_id, "value": value},
+                timeout=self._request_timeout,
+            )
+        except RpcError as error:
+            raise AgentError(f"The agent could not change {option_id}: {error.message}") from error
+        # The answer carries every option as it now stands (measured).
+        self._remember_options(session_id, answer)
+        return self.config_options(session_id)
+
+    def _remember_options(self, session_id: str, raw: Any) -> None:
+        if isinstance(raw, dict) and isinstance(raw.get("configOptions"), list):
+            self._options[session_id] = _parse_options(raw["configOptions"])
+
     # --- agent → client ------------------------------------------------
 
     def _on_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -299,9 +336,22 @@ class AcpAgent:
             notification = wire.SessionNotification.model_validate(params)
         except ValidationError:
             return
+        update = notification.update
+        kind = update.get("sessionUpdate") if isinstance(update, dict) else None
+        if kind == "available_commands_update":
+            self._commands[notification.session_id] = _parse_commands(update.get("availableCommands"))
+            return
+        if kind == "config_option_update":
+            self._remember_options(notification.session_id, update)
+            return
         queue = self._turns.get(notification.session_id)
         if queue is None:
             return  # Replay during load, or an update after its turn ended.
+        if kind == "usage_update":
+            used, size = update.get("used"), update.get("size")
+            if isinstance(used, int) and isinstance(size, int):
+                queue.put_nowait(ContextUsage(used, size))
+            return
         event = _translate(notification.update)
         if event is not None:
             queue.put_nowait(event)
@@ -327,6 +377,31 @@ class AcpAgent:
         # No `fs` or `terminal` capability is advertised, so a well-behaved
         # agent never asks; one that does is answered, not left pending.
         raise RpcError(wire.METHOD_NOT_FOUND, f"Method not found: {method}")
+
+
+def _parse_options(raw: list[Any]) -> list[ConfigOption]:
+    options = []
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        values = tuple(
+            ConfigValue(str(v.get("value")), v.get("name"), v.get("description"))
+            for v in item.get("options") or []
+            if isinstance(v, dict) and v.get("value") is not None
+        )
+        current = item.get("currentValue")
+        options.append(ConfigOption(str(item["id"]), item.get("name"), item.get("category"),
+                                    None if current is None else str(current), values))
+    return options
+
+
+def _parse_commands(raw: Any) -> list[AvailableCommand]:
+    commands = []
+    for item in raw or []:
+        if isinstance(item, dict) and item.get("name"):
+            hint = (item.get("input") or {}).get("hint") if isinstance(item.get("input"), dict) else None
+            commands.append(AvailableCommand(str(item["name"]), item.get("description"), hint))
+    return commands
 
 
 def _is_auth_error(error: RpcError) -> bool:

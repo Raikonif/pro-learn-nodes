@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from core.database import session_scope
-from repository import session_repo
+from repository import project_repo, session_repo
 from core.exceptions import NotFoundError, ValidationError
 from models.workspace import (
     ChatMessageRecord,
@@ -36,6 +38,26 @@ def _workspace(session: Session, workspace_id: str) -> WorkspaceRecord:
     if workspace is None:
         raise NotFoundError(f"Unknown workspace: {workspace_id}")
     return workspace
+
+
+def _member_project(
+    session: Session, workspace_id: str, project_id: str | None, fallback: str | None = None
+) -> str:
+    """The project a new node joins: the one named, else `fallback`, else the default.
+
+    A named project is confirmed against the derived workspace first, and a
+    foreign id is refused exactly as a missing one. An archived project cannot
+    receive a node: it would be stranded on a canvas its project has left.
+    """
+
+    if project_id is None:
+        return fallback or project_repo.default_for(session, workspace_id).id
+    project = project_repo.get(session, workspace_id, project_id)
+    if project is None:
+        raise NotFoundError(f"Unknown project: {project_id}")
+    if project.archived_at is not None:
+        raise ValidationError(f"The project {project.name} is archived; restore it first")
+    return project.id
 
 
 def _node(session: Session, workspace_id: str, node_id: str) -> WorkspaceNodeRecord:
@@ -141,6 +163,9 @@ def ensure_default_workspace(profile_id: str) -> WorkspaceRecord:
         session.add(workspace)
         session.flush()
         session.add(WorkspaceContextRecord(workspace_id=workspace.id))
+        # Every node needs a project to belong to, so the default exists
+        # before the first node can.
+        project_repo.default_for(session, workspace.id)
         return workspace
 
 
@@ -204,9 +229,30 @@ def bootstrap(workspace_id: str | None = None) -> dict[str, Any]:
         links = session.exec(
             select(NodeLinkRecord)
             .where(NodeLinkRecord.workspace_id == workspace.id)
-            .order_by(NodeLinkRecord.id)
+            # Insertion order, so "a node's first link" — the one it was created
+            # from, which branch inheritance uses — is the first one listed.
+            .order_by(text("node_links.rowid"))
         ).all()
+        # A link with exactly one archived end stays stored; the unarchived end
+        # is told, so the learner is offered the restore rather than a missing
+        # link. Computed before the links are narrowed to visible nodes.
+        archived_titles = {
+            row[0]: row[1]
+            for row in session.exec(
+                select(WorkspaceNodeRecord.id, WorkspaceNodeRecord.title).where(
+                    WorkspaceNodeRecord.workspace_id == workspace.id,
+                    WorkspaceNodeRecord.archived_at.is_not(None),
+                )
+            ).all()
+        }
+        archived_links = []
+        for link in links:
+            if link.parent_id in visible and link.child_id in archived_titles:
+                archived_links.append((link.parent_id, link.child_id))
+            elif link.child_id in visible and link.parent_id in archived_titles:
+                archived_links.append((link.child_id, link.parent_id))
         links = [l for l in links if l.parent_id in visible and l.child_id in visible]
+        projects = project_repo.list_active(session, workspace.id)
         threads = session.exec(
             select(ChatThreadRecord)
             .where(ChatThreadRecord.workspace_id == workspace.id)
@@ -252,12 +298,33 @@ def bootstrap(workspace_id: str | None = None) -> dict[str, Any]:
                         "activeSkills": node.active_skills,
                         "mcpServers": node.mcp_servers,
                         "backendAgentId": node.backend_agent_id,
+                        "agentSettings": node.agent_settings,
+                        "agentState": node.agent_state,
                         "createdAt": _timestamp(node.created_at),
                         "lastOpenedAt": _timestamp(node.last_opened_at),
                         "lastActivityAt": _timestamp(node.last_activity_at),
                         "titleSource": node.title_source,
+                        "projectId": node.project_id,
                     }
                     for node in nodes
+                ],
+                "projects": [
+                    {
+                        "id": project.id,
+                        "name": project.name,
+                        "instructions": project.instructions,
+                        "isDefault": project.is_default,
+                        "createdAt": _timestamp(project.created_at),
+                    }
+                    for project in projects
+                ],
+                "archivedLinks": [
+                    {
+                        "nodeId": node_id,
+                        "archivedNodeId": archived_id,
+                        "archivedTitle": archived_titles[archived_id],
+                    }
+                    for node_id, archived_id in archived_links
                 ],
                 "links": [
                     {
@@ -305,6 +372,7 @@ def create_branch_node(
     source_node_id: str,
     anchor_payload: dict[str, Any],
     overrides: dict[str, Any] | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     overrides = overrides or {}
     with session_scope() as session:
@@ -313,11 +381,15 @@ def create_branch_node(
         anchor = _anchor(session, workspace_id, anchor_payload)
         node = WorkspaceNodeRecord(
             workspace_id=workspace_id,
+            # The source's project unless one is named; the link back then
+            # simply crosses projects.
+            project_id=_member_project(session, workspace_id, project_id, source.project_id),
             title=overrides.get("title") or anchor.excerpt.strip()[:40] or "New node",
             mode=overrides.get("mode") or source.mode,
             active_skills=overrides.get("activeSkills") or list(source.active_skills),
             mcp_servers=overrides.get("mcpServers") or list(source.mcp_servers),
             backend_agent_id=source.backend_agent_id,
+            agent_settings=dict(source.agent_settings) if source.agent_settings else None,
         )
         session.add(node)
         session.flush()
@@ -341,14 +413,19 @@ def create_root_node(
     body: str = "",
     active_skills: list[str] | None = None,
     mcp_servers: list[str] | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create an unlinked session with its required main thread."""
+    """Create an unlinked session with its required main thread.
+
+    It joins the named project, or the workspace's default when none is named.
+    """
 
     with session_scope() as session:
         workspace = _workspace(session, workspace_id)
         topic = " ".join((title or "").split())
         node = WorkspaceNodeRecord(
             workspace_id=workspace_id,
+            project_id=_member_project(session, workspace_id, project_id),
             # No topic: a quick start, titled from its first message.
             title=topic or PROVISIONAL_TITLE,
             title_source="topic" if topic else "provisional",
@@ -370,6 +447,7 @@ def create_child_node(workspace_id: str, parent_node_id: str) -> dict[str, Any]:
         parent = _node(session, workspace_id, parent_node_id)
         node = WorkspaceNodeRecord(
             workspace_id=workspace_id,
+            project_id=parent.project_id,
             title=f"New child of {parent.title}",
             mode=parent.mode,
             active_skills=list(parent.active_skills),
@@ -378,6 +456,7 @@ def create_child_node(workspace_id: str, parent_node_id: str) -> dict[str, Any]:
             # authenticated here: the child reports that on its first turn
             # rather than quietly running somewhere else.
             backend_agent_id=parent.backend_agent_id,
+            agent_settings=dict(parent.agent_settings) if parent.agent_settings else None,
         )
         session.add(node)
         session.flush()
@@ -443,6 +522,10 @@ def set_node_backend(workspace_id: str, node_id: str, agent_id: str) -> dict[str
     with session_scope() as session:
         workspace = _workspace(session, workspace_id)
         node = _node(session, workspace_id, node_id)
+        if node.backend_agent_id != agent_id:
+            # A model id or a mode means nothing to another agent.
+            node.agent_settings = None
+            node.agent_state = None
         node.backend_agent_id = agent_id
         _bump_revision(workspace)
     return bootstrap(workspace_id)
@@ -489,7 +572,12 @@ def restore_node(workspace_id: str, node_id: str) -> dict[str, Any]:
     with session_scope() as session:
         workspace = _workspace(session, workspace_id)
         node = _node(session, workspace_id, node_id)
+        project = project_repo.get(session, workspace_id, node.project_id)
+        if project is not None and project.archived_at is not None:
+            # Restoring would strand the node on a canvas its project has left.
+            raise ValidationError(f"Restore the project {project.name} first")
         node.archived_at = None
+        node.archived_with_project_id = None
         _bump_revision(workspace)
     return bootstrap(workspace_id)
 
@@ -595,6 +683,102 @@ def messages_by_ids(workspace_id: str, message_ids: list[str]) -> dict[str, Any]
         "notFound": [i for i in wanted if i not in found],
         "truncated": len(message_ids) > MAX_FULL_MESSAGES,
     }
+
+
+# --- Where a conversation came from (branch inheritance) -------------------------
+
+ORIGIN_BUDGET = 24_000  # characters of inherited conversation, newest first
+
+
+@dataclass(frozen=True)
+class Origin:
+    """The conversation a node or side thread grew from, cut at the branch point."""
+
+    parent_title: str
+    passage: str | None
+    messages: list[dict[str, str]]  # [{role, content}], oldest first
+    omitted: bool  # earlier messages, or the start of the cut one, were left out
+    side_thread: bool = False
+
+
+def _messages_up_to(session: Session, thread_id: str, *, through: ChatMessageRecord | None, before: datetime | None):
+    query = select(ChatMessageRecord).where(
+        ChatMessageRecord.thread_id == thread_id,
+        ChatMessageRecord.kind == "message",
+        ChatMessageRecord.content != "",
+    )
+    if through is not None:
+        query = query.where(ChatMessageRecord.created_at <= through.created_at)
+    if before is not None:
+        query = query.where(ChatMessageRecord.created_at <= before)
+    return list(session.exec(query.order_by(ChatMessageRecord.created_at)).all())
+
+
+def _bounded(rows: list[ChatMessageRecord]) -> tuple[list[dict[str, str]], bool]:
+    """Newest messages that fit the budget; the cut (last) message always kept."""
+
+    kept: list[dict[str, str]] = []
+    used = 0
+    omitted = False
+    for index, row in enumerate(reversed(rows)):
+        content = row.content
+        if index == 0 and len(content) > ORIGIN_BUDGET:
+            content = content[-ORIGIN_BUDGET:]  # keep its end: that is where the passage leads
+            omitted = True
+        if used + len(content) > ORIGIN_BUDGET:
+            omitted = True
+            break
+        kept.append({"role": row.role, "content": content})
+        used += len(content)
+    return list(reversed(kept)), omitted
+
+
+def conversation_origin(workspace_id: str, thread_id: str) -> Origin | None:
+    """What a thread inherits: its anchor's conversation, or its node's creating link's.
+
+    A side thread inherits its own anchor. A node's main thread inherits from the
+    link that created the node — the first inserted (`rowid`), since a node may
+    later gain more parents in the DAG. With a passage the cut is that message,
+    inclusive; without one it is the moment the child was created.
+    """
+
+    with session_scope() as session:
+        thread = _thread(session, workspace_id, thread_id)
+        anchor_id: str | None = thread.anchor_id
+        side_thread = anchor_id is not None
+        parent: WorkspaceNodeRecord
+        if side_thread:
+            parent = session.get(WorkspaceNodeRecord, thread.node_id)
+        else:
+            link = session.exec(
+                select(NodeLinkRecord)
+                .where(NodeLinkRecord.workspace_id == workspace_id, NodeLinkRecord.child_id == thread.node_id)
+                .order_by(text("node_links.rowid"))
+            ).first()
+            if link is None:
+                return None
+            parent = session.get(WorkspaceNodeRecord, link.parent_id)
+            anchor_id = link.anchor_id
+        if anchor_id is not None:
+            anchor = session.get(SelectionAnchorRecord, anchor_id)
+            cut = session.get(ChatMessageRecord, anchor.source_message_id)
+            if cut is None:
+                return None
+            rows = _messages_up_to(session, cut.thread_id, through=cut, before=None)
+            passage: str | None = anchor.excerpt
+        else:
+            child = session.get(WorkspaceNodeRecord, thread.node_id)
+            main = session.exec(
+                select(ChatThreadRecord).where(
+                    ChatThreadRecord.node_id == parent.id, ChatThreadRecord.anchor_id.is_(None)
+                )
+            ).first()
+            if main is None:
+                return None
+            rows = _messages_up_to(session, main.id, through=None, before=child.created_at)
+            passage = None
+        messages, omitted = _bounded(rows)
+        return Origin(parent.title, passage, messages, omitted, side_thread)
 
 
 def set_agent_title(workspace_id: str, node_id: str, title: str) -> dict[str, Any]:

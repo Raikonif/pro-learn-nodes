@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
-import { parseCommand, suggestCommands } from '../commands'
+import { parseCommand, suggestMenu, type MenuAgent } from '../commands'
+import { useComposerRequest } from '../composer-request'
 import { useTurnStore } from '../turn-store'
 
 /**
@@ -13,8 +14,14 @@ import { useTurnStore } from '../turn-store'
  * that tool: it is sent as typed, with the command named beside it. Typing
  * `/` offers the commands (arrows to move, Tab or Enter to complete, Esc to
  * dismiss).
+ *
+ * The menu also lists the commands the session's agent announced (`agent`),
+ * under the agent's name — its skills, `/compact`, and so on. Choosing one
+ * inserts it as announced; sending it is an ordinary message the agent
+ * interprets, with no `command` beside it (agent-session-controls design.md
+ * "The agent's commands are relayed, not reimplemented").
  */
-function Composer({ threadId }: { threadId: string }) {
+function Composer({ threadId, agent = null }: { threadId: string; agent?: MenuAgent | null }) {
   const [draft, setDraft] = useState('')
   const phase = useTurnStore((s) => s.turns[threadId]?.phase)
   const send = useTurnStore((s) => s.send)
@@ -27,8 +34,33 @@ function Composer({ threadId }: { threadId: string }) {
   const [dismissed, setDismissed] = useState(false)
   const [active, setActive] = useState(0)
   const listId = useId()
-  const suggestions = dismissed ? [] : suggestCommands(draft)
+  const groups = dismissed ? [] : suggestMenu(draft, agent)
+  const suggestions = groups.flatMap((group) => group.commands)
   const activeIndex = Math.min(active, Math.max(suggestions.length - 1, 0))
+  const optionId = (index: number) => `${listId}-option-${index}`
+  const showsAgent = groups.some((group) => group.source === 'agent')
+
+  // A long agent list scrolls; keep the option the arrows reached in view.
+  useEffect(() => {
+    if (suggestions.length === 0) return
+    document.getElementById(optionId(activeIndex))?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeIndex, suggestions.length])
+
+  // Text placed from elsewhere (the practice add control) replaces the draft
+  // and waits for the learner, cursor at its end; nothing is sent.
+  const placed = useComposerRequest((s) => s.request)
+  const consumePlaced = useComposerRequest((s) => s.consume)
+  useEffect(() => {
+    if (!placed) return
+    setDraft(placed.text)
+    setDismissed(false)
+    consumePlaced()
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.focus()
+    // After React has written the new value into the textarea.
+    requestAnimationFrame(() => textarea.setSelectionRange(placed.text.length, placed.text.length))
+  }, [placed, consumePlaced])
 
   // A session that was just created opens ready to write. The request is
   // consumed here, once, so remounting later never steals focus back.
@@ -100,30 +132,50 @@ function Composer({ threadId }: { threadId: string }) {
       className="mt-4 flex flex-col gap-1 border-t border-gray-200 pt-3"
     >
       {suggestions.length > 0 ? (
-        <ul
+        <div
           id={listId}
           role="listbox"
-          aria-label="Practice commands"
-          className="flex flex-col rounded border border-gray-200 bg-white py-1 text-xs shadow-sm"
+          aria-label={showsAgent ? 'Commands' : 'Practice commands'}
+          className="flex max-h-48 flex-col overflow-y-auto rounded border border-gray-200 bg-white py-1 text-xs shadow-sm"
         >
-          {suggestions.map((command, index) => (
-            <li
-              key={command.name}
-              id={`${listId}-${command.name}`}
-              role="option"
-              aria-selected={index === activeIndex}
-              // Keeps focus in the textarea while choosing with the pointer.
-              onMouseDown={(event) => {
-                event.preventDefault()
-                complete(index)
-              }}
-              className={`cursor-pointer px-2 py-1 ${index === activeIndex ? 'bg-blue-50 text-blue-900' : 'text-gray-700'}`}
-            >
-              <span className="font-mono font-semibold">/{command.name}</span>
-              <span className="ml-2 text-gray-500">{command.description}</span>
-            </li>
-          ))}
-        </ul>
+          {groups.map((group) => {
+            const offset = suggestions.indexOf(group.commands[0])
+            const labelId = `${listId}-${group.source}-label`
+            return (
+              <div key={group.source} role="group" aria-labelledby={labelId}>
+                <div
+                  id={labelId}
+                  role="presentation"
+                  className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400"
+                >
+                  {group.label}
+                </div>
+                {group.commands.map((command, position) => {
+                  const index = offset + position
+                  return (
+                    <div
+                      key={command.name}
+                      id={optionId(index)}
+                      role="option"
+                      aria-selected={index === activeIndex}
+                      // Keeps focus in the textarea while choosing with the pointer.
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        complete(index)
+                      }}
+                      className={`cursor-pointer px-2 py-1 ${index === activeIndex ? 'bg-blue-50 text-blue-900' : 'text-gray-700'}`}
+                    >
+                      <span className="font-mono font-semibold">/{command.name}</span>
+                      {command.description ? (
+                        <span className="ml-2 text-gray-500">{command.description}</span>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
       ) : null}
       {problem ? (
         <p role="alert" className="text-xs text-red-700">
@@ -137,13 +189,13 @@ function Composer({ threadId }: { threadId: string }) {
         aria-autocomplete="list"
         aria-controls={suggestions.length > 0 ? listId : undefined}
         aria-activedescendant={
-          suggestions.length > 0 ? `${listId}-${suggestions[activeIndex]?.name}` : undefined
+          suggestions.length > 0 ? optionId(activeIndex) : undefined
         }
         rows={2}
         value={draft}
         onChange={(event) => edit(event.target.value)}
         onKeyDown={onKeyDown}
-        placeholder="Write a message, or / for practice commands…"
+        placeholder="Write a message, or / for commands…"
         className="min-w-0 flex-1 resize-none rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
       />
       {running ? (

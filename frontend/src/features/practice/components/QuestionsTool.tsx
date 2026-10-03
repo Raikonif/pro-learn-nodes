@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { PracticeAttempt, PracticeItem } from '../practice-api'
 import { usePracticeStore } from '../practice-store'
@@ -16,6 +16,7 @@ import {
   fieldClass,
   useIsHighlighted,
 } from './ToolStates'
+import type { BlockBodyProps } from './block-body'
 
 /**
  * Free-response questions on the open node.
@@ -24,10 +25,15 @@ import {
  * reference answer — when the item has one — is revealed for the learner to
  * compare against. No score, mark, or pass/fail is ever rendered.
  */
-function QuestionsTool({ nodeId }: { nodeId: string }) {
+function QuestionsTool({ nodeId, itemIds, canAuthor = true, startAuthoring = false }: BlockBodyProps) {
   const material = usePracticeStore((s) => s.material[nodeId])
   const load = usePracticeStore((s) => s.load)
-  const [authoring, setAuthoring] = useState(false)
+  const [authoring, setAuthoring] = useState(startAuthoring)
+
+  // Asked again while already mounted (the block was expanded): open the form.
+  useEffect(() => {
+    if (startAuthoring) setAuthoring(true)
+  }, [startAuthoring])
 
   if (!material || material.status === 'loading') {
     return <ToolLoading>Loading this node's questions…</ToolLoading>
@@ -42,12 +48,14 @@ function QuestionsTool({ nodeId }: { nodeId: string }) {
     )
   }
 
-  const items = material.items.filter((item) => item.kind === 'free_response')
+  const items = material.items.filter(
+    (item) => item.kind === 'free_response' && (itemIds === undefined || itemIds.includes(item.id)),
+  )
 
   return (
     <div className="flex flex-col gap-3">
       {items.length === 0 && !authoring && (
-        <p className="text-xs text-gray-600">This node has no questions yet.</p>
+        <p className="text-xs text-gray-600">No questions yet.</p>
       )}
 
       {items.map((item) => (
@@ -59,13 +67,14 @@ function QuestionsTool({ nodeId }: { nodeId: string }) {
         />
       ))}
 
-      {authoring ? (
-        <FreeResponseForm nodeId={nodeId} onDone={() => setAuthoring(false)} />
-      ) : (
-        <button type="button" onClick={() => setAuthoring(true)} className={`self-start ${buttonSecondary}`}>
-          Write a question
-        </button>
-      )}
+      {canAuthor &&
+        (authoring ? (
+          <FreeResponseForm nodeId={nodeId} onDone={() => setAuthoring(false)} />
+        ) : (
+          <button type="button" onClick={() => setAuthoring(true)} className={`self-start ${buttonSecondary}`}>
+            Write a question
+          </button>
+        ))}
     </div>
   )
 }

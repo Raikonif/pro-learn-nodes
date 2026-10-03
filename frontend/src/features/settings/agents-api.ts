@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import apiClient, { ApiHttpError } from '../../shared/lib/api-client'
+import { toModeGroup, type ModeGroup } from '../../shared/lib/workspace-types'
 
 /**
  * Wire contract for the agents routes (design.md "Interfaces" → Agents).
@@ -141,4 +142,64 @@ export function testAgent(agentId: string): Promise<ConnectionTest> {
   return apiClient.post(`/agents/${encodeURIComponent(agentId)}/test`, {}, {
     schema: ConnectionTestSchema,
   })
+}
+
+// ── What an agent offers a session (agent-session-controls) ──────────────
+
+const lenientString = z.string().nullish().transform((v) => v ?? null)
+
+export type { ModeGroup }
+
+/**
+ * Reads a mode group leniently. Anything absent or unrecognised is the most
+ * permissive group: an unknown mode is never assumed to be a safe one.
+ */
+const ModeGroupSchema = z.unknown().transform(toModeGroup)
+
+const OptionValueSchema = z.object({
+  value: z.string(),
+  name: z.string(),
+  description: lenientString,
+})
+
+const optionOf = <V extends z.ZodTypeAny>(value: V) =>
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** The agent's own default, as last reported. */
+    current: lenientString,
+    values: z.array(value),
+  })
+
+export const AgentOptionSchema = optionOf(OptionValueSchema)
+export const ModeOptionSchema = optionOf(OptionValueSchema.extend({ group: ModeGroupSchema }))
+
+export type AgentOption = z.infer<typeof AgentOptionSchema>
+export type ModeOption = z.infer<typeof ModeOptionSchema>
+export type AgentOptionValue = AgentOption['values'][number]
+
+/** A command the agent announced; `name` has no leading `/` and is kept as announced (`$archify`). */
+export const AgentCommandSchema = z.object({
+  name: z.string().min(1),
+  description: lenientString,
+  inputHint: lenientString,
+})
+
+export type AgentCommand = z.infer<typeof AgentCommandSchema>
+
+export const AgentOfferSchema = z.object({
+  /** `false` until the agent has been reached on this device: nothing is offered yet. */
+  known: z.boolean(),
+  model: AgentOptionSchema.nullish().transform((v) => v ?? null),
+  effort: AgentOptionSchema.nullish().transform((v) => v ?? null),
+  fast: AgentOptionSchema.nullish().transform((v) => v ?? null),
+  mode: ModeOptionSchema.nullish().transform((v) => v ?? null),
+  commands: z.array(AgentCommandSchema).nullish().transform((v) => v ?? []),
+})
+
+export type AgentOffer = z.infer<typeof AgentOfferSchema>
+
+/** What the agent last reported offering: its options and its commands. */
+export function fetchAgentOffer(agentId: string): Promise<AgentOffer> {
+  return apiClient.get(`/agents/${encodeURIComponent(agentId)}/offer`, { schema: AgentOfferSchema })
 }

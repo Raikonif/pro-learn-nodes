@@ -1,90 +1,63 @@
 ## Purpose
 
-The single runtime set of invocable commands that every command surface renders, derived from the loaded skill catalogue rather than hand-maintained, so installing a skill folder makes it invocable and a skill that failed to load says so instead of disappearing.
+The single runtime list of commands Learn Nodes offers — from the workspace, practice, the open session's controls, and the open node's agent — so that every surface that offers commands names the same ones, and an action that cannot run now says why instead of disappearing.
 
 ## ADDED Requirements
 
 ### Requirement: One registry backs every command surface
-The system SHALL maintain exactly one set of invocable commands. Every surface that offers commands SHALL offer that same set: a command reachable from one surface SHALL be reachable from every other, with the same name, the same availability, and the same effect. No surface SHALL define, hide, or add a command of its own.
+The application SHALL hold one list of commands, assembled at runtime from the workspace's actions, practice's add entries, the open session's controls, and the commands the open node's agent announced. Every surface that offers commands SHALL read that list, and a command SHALL behave the same whichever surface invokes it.
 
-#### Scenario: The two surfaces agree on the command set
-- **WHEN** a learner opens the command palette and then opens the composer command menu in the same workspace state
-- **THEN** both offer the same commands with the same names and the same availability
+#### Scenario: A workspace action is a command
+- **WHEN** the learner looks for "New session" in the palette
+- **THEN** it is listed, and invoking it starts a session exactly as the New session button does
 
-#### Scenario: A command added to the registry appears in both surfaces
-- **WHEN** the registry gains a command
-- **THEN** that command is offered by the palette and by the composer command menu without either surface being changed
+#### Scenario: A workbench entry is a command
+- **WHEN** a node is open and the learner invokes "Write a quiz question" from the palette
+- **THEN** the learner's own quiz block opens with its form open, as from the workbench's add control
 
-### Requirement: Skill commands are derived from the loaded catalogue
-The system SHALL derive the registry's skill commands from the set of skills loaded from the skills directory. Adding a valid skill folder SHALL make its commands appear once the catalogue is next read, and removing a skill folder SHALL remove its commands. The registry SHALL NOT require a per-skill declaration anywhere else in order for a skill to be invocable.
+### Requirement: The agent's announced commands and skills are commands
+The registry SHALL include every command the open node's agent last announced for its session, including the learner's skills, grouped under the agent's name and described as the agent describes them. A command the agent announces later SHALL appear without any change to the application. An announced command sharing a name with one of Learn Nodes' own commands SHALL be left out.
 
-#### Scenario: A newly installed skill becomes invocable
-- **WHEN** a learner places a valid skill folder in the skills directory and the catalogue is read again
-- **THEN** that skill's commands are offered by every command surface
+#### Scenario: A skill the agent announces is listed
+- **WHEN** the open node's agent announces a skill the learner installed
+- **THEN** the registry lists it under the agent's name
 
-#### Scenario: A removed skill stops being offered
-- **WHEN** a skill folder is removed from the skills directory and the catalogue is read again
-- **THEN** that skill's commands are no longer offered by any command surface, and invoking one by its former name reports that the command no longer exists
+#### Scenario: A reserved name stays Learn Nodes'
+- **WHEN** the agent announces a command named `quiz`
+- **THEN** the registry lists only Learn Nodes' `/quiz`
 
-#### Scenario: The catalogue is re-read without restarting
-- **WHEN** a learner installs a skill while the application is running and asks the workspace to reload the catalogue
-- **THEN** the new skill's commands are offered without the application being restarted and without the open conversation being lost
+### Requirement: Sendable commands are placed in the composer, never sent
+Invoking `/code`, `/qa`, `/quiz`, or an agent's command from anywhere other than the composer SHALL place it in the open conversation's composer, focused, replacing nothing but the draft, and SHALL NOT send a message or start a turn.
 
-### Requirement: A loaded skill contributes exactly two commands
-For each loaded skill the registry SHALL contain exactly two commands: one that runs the skill once against the open conversation, and one that toggles the skill's activation for the open node. Both SHALL be named after the skill and SHALL carry the skill's description from its definition, so the two are distinguishable by name alone.
+#### Scenario: Invoking an agent's skill from the palette
+- **WHEN** the learner invokes the agent's `/compact` from the palette
+- **THEN** the composer holds `/compact ` with the cursor after it, and no turn starts
 
-#### Scenario: Both commands are present for one skill
-- **WHEN** a skill named `quiz-master` is loaded
-- **THEN** the registry contains a command that runs `quiz-master` once and a command that toggles `quiz-master` for the open node, and each names the skill and shows its description
+### Requirement: Session choices are commands, and acting without asking still needs confirmation
+The registry SHALL offer each model, effort, and fast-mode value the session's agent offers, and each permission mode that asks or only edits, as commands that make the same choice the session controls make. A permission mode that acts without asking SHALL be listed but unavailable, with the reason that it is chosen and confirmed in the session controls.
 
-#### Scenario: The toggle command names its current direction
-- **WHEN** a skill is already active on the open node
-- **THEN** its toggle command is presented as deactivating that skill, and when it is not active it is presented as activating it
+#### Scenario: Choosing a model from the palette
+- **WHEN** the learner invokes "Model: Smart 2" on a node whose agent offers it
+- **THEN** the node's model choice is Smart 2, as if chosen in the session controls
 
-### Requirement: A command declares whether it needs an open node
-Every command SHALL declare whether it requires an open node. A command requiring one SHALL be available only while a node is open. A command not requiring one SHALL be available whenever a command surface is open.
+#### Scenario: An unasked mode is not set from the palette
+- **WHEN** the learner looks for the mode that bypasses permissions
+- **THEN** it is listed as unavailable, with the reason pointing to the session controls, and invoking it changes nothing
 
-#### Scenario: Skill commands require an open node
-- **WHEN** the registry is inspected while no node is open
-- **THEN** every skill command reports itself as unavailable and states that it requires an open node
+### Requirement: Unavailable commands are listed with the reason, not hidden
+A command that cannot run in the current state SHALL be listed as unavailable together with the reason: it needs an open node, or the session's agent has not yet reported what it offers. Invoking an unavailable command SHALL do nothing.
 
-#### Scenario: Navigation commands do not require an open node
-- **WHEN** a command that opens a node or a project is inspected while no node is open
-- **THEN** it reports itself as available
+#### Scenario: No node open
+- **WHEN** no node is open
+- **THEN** practice and session commands are listed as unavailable with the reason that they need an open session, and invoking one creates nothing
 
-### Requirement: Unavailable commands are listed, not hidden
-The system SHALL include unavailable commands in the results a command surface renders, marked as unavailable and accompanied by the reason. An unavailable command SHALL NOT be omitted from results, SHALL NOT be activatable, and activating it SHALL restate the reason without performing any action.
+#### Scenario: The agent has not been reached
+- **WHEN** a node is open whose agent has not yet reported what it offers
+- **THEN** session commands are listed as unavailable with the reason that a message must be sent first
 
-#### Scenario: An unavailable command is still discoverable
-- **WHEN** a learner searches for a skill command while no node is open
-- **THEN** the command is listed, marked unavailable, and the listing states that an open node is required
+### Requirement: Command identifiers are stable and unique
+Every command SHALL have an identifier unique within the registry and stable across renders and restarts for the same underlying action.
 
-#### Scenario: Activating an unavailable command does nothing
-- **WHEN** a learner attempts to activate a command marked unavailable
-- **THEN** no conversation is started, no node is created, no node configuration changes, and the reason is restated
-
-### Requirement: A skill that failed to load is reported, never silently absent
-When a folder in the skills directory cannot be loaded, the system SHALL record an entry naming the folder and the reason it was rejected, and SHALL present that entry among the registry's results as permanently unavailable. A rejected folder SHALL NOT prevent other skills from loading and SHALL NOT prevent a conversation from running.
-
-#### Scenario: A malformed skill is named rather than dropped
-- **WHEN** a skill folder is present whose definition is missing or invalid
-- **THEN** the registry reports an entry naming that folder and the reason it was rejected, and that entry is marked unavailable
-
-#### Scenario: One bad skill does not suppress the good ones
-- **WHEN** the skills directory holds one valid skill and one that cannot be loaded
-- **THEN** the valid skill's commands are offered and the invalid folder is reported alongside them
-
-#### Scenario: A rejected skill cannot be invoked
-- **WHEN** a learner attempts to activate the entry for a rejected skill folder
-- **THEN** no skill is run or activated and the recorded reason is restated
-
-### Requirement: Command names are stable and unique
-Each command SHALL have an identifier that is stable across catalogue reads and unique within the registry. Two skills SHALL NOT produce commands with the same identifier. When two loaded skills would collide on a name, the system SHALL report the collision as a load rejection for the later folder rather than silently overriding the earlier one.
-
-#### Scenario: An identifier survives a catalogue reload
-- **WHEN** the catalogue is read again with the same skills present
-- **THEN** each skill's commands keep the identifiers they had before
-
-#### Scenario: A name collision is reported
-- **WHEN** two skill folders declare the same skill name
-- **THEN** one is loaded, the other is reported as rejected naming the collision, and neither silently replaces the other
+#### Scenario: Two agents' commands do not collide
+- **WHEN** the learner switches the node to another agent that announces a command with the same name
+- **THEN** the registry lists it once, under the new agent's name

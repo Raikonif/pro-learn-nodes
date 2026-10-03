@@ -6,6 +6,7 @@ someone else never finds their agents, or their subscription, behind it.
 """
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Column, Index, JSON, String, text
 from sqlmodel import Field, SQLModel
@@ -37,4 +38,8 @@ class AgentRegistrationRecord(SQLModel, table=True):
     # mechanism, and nothing here ever asks for a key to put in this map.
     env: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     is_default: bool = Field(default=False, nullable=False)
+    # What the agent last reported offering on this device: its session
+    # config options and its commands. Recorded, never configured.
+    offered_options: list[dict[str, Any]] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    offered_commands: list[dict[str, Any]] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_at: datetime = Field(default_factory=now, nullable=False)

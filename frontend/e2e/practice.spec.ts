@@ -14,7 +14,19 @@ async function newSession(page: Page, title: string): Promise<void> {
 }
 
 function practice(page: Page) {
-  return page.getByRole('tablist', { name: 'Practice tools' }).locator('..')
+  return page.getByTestId('practice-rail')
+}
+
+/** Chooses an entry of the workbench's add control. */
+async function add(page: Page, entry: string): Promise<void> {
+  await practice(page).getByRole('button', { name: '+ Add' }).click()
+  await page.getByRole('menuitem', { name: entry }).click()
+}
+
+/** Expands a block by its header (its accessible name starts `<Kind>: <title>`). */
+async function expand(page: Page, header: RegExp): Promise<void> {
+  const button = practice(page).getByRole('button', { name: header })
+  if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
 }
 
 test.describe('practice', () => {
@@ -23,7 +35,7 @@ test.describe('practice', () => {
     await page.goto('/')
     await createProfile(page, 'Practice Sandbox Spec')
     await newSession(page, 'Loops')
-    await page.getByRole('tab', { name: 'Code' }).click()
+    await add(page, 'Open scratch code')
     const code = page.getByLabel('Python code')
     const result = page.getByRole('region', { name: 'Run result' })
 
@@ -55,9 +67,9 @@ test.describe('practice', () => {
     await page.goto('/')
     await createProfile(page, 'Practice Questions Spec')
     await newSession(page, 'Folds')
-    await page.getByRole('tab', { name: 'Q&A' }).click()
-
-    await page.getByRole('button', { name: 'Write a question' }).click()
+    // Writing a question from the add control opens the learner's own block
+    // with its form already open.
+    await add(page, 'Write a question')
     const form = page.getByRole('form', { name: 'New question' })
     await form.getByLabel('Question', { exact: true }).fill('What does a fold do?')
     await form.getByRole('button', { name: 'Add question' }).click()
@@ -68,8 +80,12 @@ test.describe('practice', () => {
     await expect(page.getByText('Your latest answer · 1 attempt')).toBeVisible()
 
     // A restart: the page reloads and reads everything back from the backend.
+    // The block is still the expanded one: the arrangement is kept on this device.
     await page.reload()
-    await page.getByRole('tab', { name: 'Q&A' }).click()
+    await expect(practice(page).getByRole('button', { name: /^Q&A: Your questions/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
     await expect(page.getByText('What does a fold do?')).toBeVisible()
     await expect(page.getByText('It reduces a structure')).toBeVisible()
 
@@ -126,15 +142,19 @@ test.describe('practice', () => {
     ).toBeVisible()
     await page.getByTestId('left-rail').getByRole('button', { name: 'Recursion schemes', exact: true }).click()
 
-    await page.getByRole('tab', { name: 'Code' }).click()
-    await expect(page.getByLabel('Python code')).toHaveValue('')
-    await page.getByRole('tab', { name: 'Q&A' }).click()
+    // The branch's workbench is empty: none of the source's practice came along.
+    await expect(practice(page).getByTestId('workbench-empty')).toBeVisible()
     await expect(page.getByText('Source question?')).toHaveCount(0)
+    await add(page, 'Open scratch code')
+    await expect(page.getByLabel('Python code')).toHaveValue('')
 
     await page.getByTestId('left-rail').getByRole('button', { name: 'Source', exact: true }).click()
-    await page.getByRole('tab', { name: 'Code' }).click()
+    // Wait for Source's own workbench before reading which block is expanded.
+    await expect(page.getByTestId('center-region').getByRole('heading', { name: 'Source' })).toBeVisible()
+    await expect(practice(page).getByTestId('practice-block')).toHaveCount(2)
+    await expand(page, /^Scratch: Scratch code/)
     await expect(page.getByLabel('Python code')).toHaveValue('print("source code")')
-    await page.getByRole('tab', { name: 'Q&A' }).click()
+    await expand(page, /^Q&A: Your questions/)
     await expect(page.getByText('Source question?')).toBeVisible()
   })
 })

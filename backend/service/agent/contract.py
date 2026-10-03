@@ -22,6 +22,10 @@ from typing import Literal, Protocol, runtime_checkable
 __all__ = [
     "Agent",
     "AgentCommand",
+    "AvailableCommand",
+    "ConfigOption",
+    "ConfigValue",
+    "ContextUsage",
     "McpServer",
     "AgentError",
     "AgentExited",
@@ -65,6 +69,36 @@ class McpServer:
     name: str
     url: str
     headers: tuple[tuple[str, str], ...] = ()
+
+
+# --- Session controls (ACP session config options and commands) ----------------
+
+
+@dataclass(frozen=True)
+class ConfigValue:
+    value: str
+    name: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class ConfigOption:
+    """One of an agent's session config options, as it reported it."""
+
+    id: str
+    name: str | None
+    category: str | None
+    current: str | None
+    values: tuple[ConfigValue, ...] = ()
+
+
+@dataclass(frozen=True)
+class AvailableCommand:
+    """A command the agent announced — its own, or the learner's installed skill."""
+
+    name: str
+    description: str | None = None
+    input_hint: str | None = None
 
 
 # --- Negotiation ----------------------------------------------------------
@@ -164,6 +198,14 @@ class Usage:
 
 
 @dataclass(frozen=True)
+class ContextUsage:
+    """How much of the agent's context window the session is using, in tokens."""
+
+    used: int
+    size: int
+
+
+@dataclass(frozen=True)
 class TurnEnded:
     """Always the last event of a turn. `reason` explains any non-completion."""
 
@@ -172,7 +214,7 @@ class TurnEnded:
 
 
 TurnEvent = (
-    TextChunk | ThoughtChunk | ToolActivity | PlanUpdate | PermissionRefused | Usage | TurnEnded
+    TextChunk | ThoughtChunk | ToolActivity | PlanUpdate | PermissionRefused | Usage | ContextUsage | TurnEnded
 )
 
 
@@ -246,6 +288,15 @@ class Agent(Protocol):
         answering mid-turn ends the turn `failed`, after whatever it had
         already produced.
         """
+
+    def config_options(self, session_id: str) -> list[ConfigOption]:
+        """The session's options as last reported (empty if none were)."""
+
+    def available_commands(self, session_id: str) -> list[AvailableCommand]:
+        """The commands the agent last announced for the session."""
+
+    async def set_config_option(self, session_id: str, option_id: str, value: str) -> list[ConfigOption]:
+        """Change one option; returns every option as it now stands."""
 
     async def cancel(self, session_id: str) -> None:
         """Ask the agent to stop; the running `prompt` ends `cancelled`."""

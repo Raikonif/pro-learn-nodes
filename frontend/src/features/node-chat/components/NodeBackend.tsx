@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from 'react'
 import { selectDefaultAgent, useAgentsStore } from '../../settings'
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
 import type { WorkspaceNode } from '../../../shared/lib/workspace-types'
+import { useSessionStore } from '../session-store'
 
 /**
  * Which agent the node's conversation runs on, and what that costs.
@@ -45,6 +46,8 @@ function NodeBackend({ node }: { node: WorkspaceNode }) {
     setError(null)
     try {
       await setNodeBackend(node.id, agentId)
+      // What the previous agent reported about the session no longer applies.
+      useSessionStore.getState().forget(node.id)
       setChoosing(false)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -101,8 +104,8 @@ function NodeBackend({ node }: { node: WorkspaceNode }) {
         </p>
       ) : null}
       <p data-testid="agent-backend-limits" className="mt-1 text-gray-500">
-        Compaction and skill merging are unavailable on agent backends: the agent manages its own
-        context, so Learn Nodes cannot assemble or compact it.
+        Learn Nodes&apos; drill-down compaction and skill merging are unavailable on agent backends:
+        the agent manages its own context. It compacts it itself — run its /compact from the / menu.
       </p>
     </div>
   )

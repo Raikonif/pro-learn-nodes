@@ -22,7 +22,7 @@ The system SHALL store nodes, directed node links, threads, messages, anchors, a
 ## ADDED Requirements
 
 ### Requirement: Projects and archive state are durably stored with the workspace
-The system SHALL persist each workspace's projects, their instructions and source attachments, and the archived state of every project and node in local application data, so that they survive a restart unchanged. The frontend SHALL NOT be the authoritative durable store for project membership or archive state.
+The system SHALL persist each workspace's projects, their instructions, and the archived state of every project and node in local application data, so that they survive a restart unchanged. The frontend SHALL NOT be the authoritative durable store for project membership or archive state.
 
 #### Scenario: Projects survive a restart
 - **WHEN** a learner creates projects, records instructions on one, moves nodes between them, closes the desktop app, and opens it again

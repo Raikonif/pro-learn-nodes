@@ -45,6 +45,11 @@ export const PracticeItemSchema = z.object({
   /** Code exercises only: what a correct program prints, when the author said. */
   expectedOutput: nullableString,
   authoredBy: PracticeAuthorSchema.nullable().optional().transform((v) => v ?? null),
+  /**
+   * The delivery that brought an agent's item; `null` for the learner's own
+   * and for a backend that predates the field. Items sharing one are a block.
+   */
+  deliveryId: nullableString,
 })
 
 export type PracticeItem = z.infer<typeof PracticeItemSchema>

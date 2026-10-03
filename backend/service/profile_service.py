@@ -30,6 +30,7 @@ from core.database import session_scope
 from core.exceptions import NotFoundError, ValidationError
 from core.secrets import SecretStore, get_secret_store
 from models.profile import ProfileRecord
+from models.project import ProjectRecord
 from models.workspace import (
     ChatMessageRecord,
     ChatThreadRecord,
@@ -93,6 +94,7 @@ def _purge_workspace(session: Session, workspace_id: str) -> None:
         ChatThreadRecord,
         WorkspaceContextRecord,
         WorkspaceNodeRecord,
+        ProjectRecord,
     ):
         session.execute(delete(model).where(model.workspace_id == workspace_id))
     session.execute(delete(WorkspaceRecord).where(WorkspaceRecord.id == workspace_id))

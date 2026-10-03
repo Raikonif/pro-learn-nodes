@@ -25,7 +25,12 @@ from core.exceptions import NotFoundError
 from models.agent import AgentRegistrationRecord
 from repository import agent_repo
 from service import workspace
+from models.workspace import WorkspaceNodeRecord
+from service.agent import controls
+from core.exceptions import ValidationError
 from service.agent.contract import (
+    AvailableCommand,
+    ConfigOption,
     Agent,
     AgentCommand,
     AgentError,
@@ -43,6 +48,9 @@ __all__ = [
     "serialize",
     "set_default",
     "set_node_backend",
+    "agent_offer",
+    "record_offer",
+    "set_node_agent_settings",
     "test_connection",
     "test_registered",
 ]
@@ -146,7 +154,10 @@ async def test_connection(command: AgentCommand, launch: Launcher) -> dict[str, 
     ]
     try:
         with tempfile.TemporaryDirectory(prefix="learn-nodes-agent-test-") as scratch:
-            await agent.new_session(Path(scratch))
+            session_id = await agent.new_session(Path(scratch))
+            options = getattr(agent, "config_options", None)
+            result["_offer"] = (options(session_id) if options else None,
+                                agent.available_commands(session_id) if options else None)
     except AgentNotAuthenticated as error:
         result.update(stage="authenticate", message=str(error) or "The agent is not signed in.")
     except AgentError as error:
@@ -182,7 +193,9 @@ async def register(
         record = agent_repo.create(
             session, profile_id=profile_id, name=name, command=command, args=args, env=env
         )
-        return serialize(record)
+        saved = serialize(record)
+    record_offer(saved["id"], *probe.pop("_offer", (None, None)))
+    return saved
 
 
 async def test_registered(profile_id: str, agent_id: str, launch: Launcher) -> dict[str, Any]:
@@ -191,7 +204,10 @@ async def test_registered(profile_id: str, agent_id: str, launch: Launcher) -> d
         if record is None:
             raise NotFoundError("Agent not found")
         command = command_of(record)
-    return await test_connection(command, launch)
+    result = await test_connection(command, launch)
+    options, commands = result.pop("_offer", (None, None))
+    record_offer(agent_id, options, commands)
+    return result
 
 
 def set_default(profile_id: str, agent_id: str) -> dict[str, Any]:
@@ -200,6 +216,76 @@ def set_default(profile_id: str, agent_id: str) -> dict[str, Any]:
         if record is None:
             raise NotFoundError("Agent not found")
         return serialize(record)
+
+
+def _registration_for_node(session: Any, profile_id: str, node: Any) -> AgentRegistrationRecord | None:
+    if node.backend_agent_id is not None:
+        found = agent_repo.get(session, profile_id, node.backend_agent_id)
+        if found is not None:
+            return found
+    return agent_repo.default_for(session, profile_id)
+
+
+def agent_offer(profile_id: str, agent_id: str) -> dict[str, Any]:
+    with session_scope() as session:
+        record = agent_repo.get(session, profile_id, agent_id)
+        if record is None:
+            raise NotFoundError("Agent not found")
+        return controls.offer(record.offered_options, record.offered_commands)
+
+
+def record_offer(agent_id: str, options: list[ConfigOption] | None, commands: list[AvailableCommand] | None) -> None:
+    """Remember what an agent reported offering. A `None` leaves that part as it was."""
+
+    with session_scope() as session:
+        record = session.get(AgentRegistrationRecord, agent_id)
+        if record is None:
+            return
+        if options:
+            record.offered_options = controls.serialize_options(options)
+        if commands:
+            record.offered_commands = controls.serialize_commands(commands)
+
+
+def set_node_agent_settings(
+    profile_id: str, workspace_id: str, node_id: str, changes: dict[str, Any], *, confirmed_unasked: bool
+) -> dict[str, Any]:
+    """Change a session's choices. A key set to None returns that control to the agent's default.
+
+    Values are checked against what the session's agent reported offering; a
+    mode that lets the agent act without asking — or one not recognised —
+    needs `confirmed_unasked`. The application never sets such a mode itself.
+    """
+
+    allowed = {"model", "effort", "fast", "mode"}
+    unknown = set(changes) - allowed
+    if unknown:
+        raise ValidationError(f"Unknown setting: {', '.join(sorted(unknown))}")
+    with session_scope() as session:
+        node = session.get(WorkspaceNodeRecord, node_id)
+        if node is None or node.workspace_id != workspace_id:
+            raise NotFoundError(f"Unknown node: {node_id}")
+        registration = _registration_for_node(session, profile_id, node)
+        if registration is None or registration.offered_options is None:
+            raise ValidationError("Choices appear once the session's agent has been reached on this device.")
+        offered = {o["control"]: {v["value"] for v in o["values"]} for o in registration.offered_options}
+        settings = dict(node.agent_settings or {})
+        for control, value in changes.items():
+            if value is None:
+                settings.pop(control, None)
+                continue
+            value = str(value)
+            if value not in offered.get(control, set()):
+                raise ValidationError(f"{value} is not offered by {registration.name} for {control}.")
+            if control == "mode" and controls.mode_group(value) == "unasked" and not confirmed_unasked:
+                raise ValidationError(
+                    f"The {value} mode lets the agent act on your system without asking; confirm to choose it."
+                )
+            settings[control] = value
+        node.agent_settings = settings or None
+        if node.backend_agent_id is None:
+            node.backend_agent_id = registration.id
+    return workspace.bootstrap(workspace_id)
 
 
 def set_node_backend(

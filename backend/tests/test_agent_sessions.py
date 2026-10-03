@@ -627,3 +627,252 @@ async def test_a_command_turn_that_delivers_nothing_says_so(account):
 
     [notice] = [m for m in _messages(thread) if m.kind == "practice_not_delivered"]
     assert notice.data == {"tool": "code"} and "Code" in notice.content
+
+
+async def test_each_delivery_stamps_its_items_and_the_learners_stay_unstamped(account):
+    from service import practice_service
+    from service.context_server.delivery import Delivery
+
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    node, thread = _node(workspace_id)
+    codex = {"agentId": agent_id, "name": "Codex"}
+    question = {"kind": "multiple_choice", "prompt": "Pick", "options": [
+        {"text": "a", "correct": True}, {"text": "b", "correct": False}]}
+    first, second = (practice_service.author_item(workspace_id, node, question, authored_by=codex)["id"]
+                     for _ in range(2))
+    mine = practice_service.author_item(workspace_id, node, {"kind": "free_response", "prompt": "Why?"})["id"]
+    context = _ContextWithBus()
+    turns = iter([first, second])
+
+    class OneQuizPerTurn(FakeAgent):
+        async def prompt(self, session_id, text):
+            self.sessions[session_id].append(text)
+            context.deliveries.publish(Delivery(node, thread, "quiz", (next(turns),), "Codex"))
+            yield TextChunk("done")
+            yield TurnEnded("completed")
+
+    service = _service_with_context(data_dir, {agent_id: OneQuizPerTurn()}, context)
+    delivered = []
+    for text in ("quiz me", "again"):
+        delivered += [d["messageId"] for n, d in await _run(service, account, thread, text) if n == "practice.delivered"]
+
+    by_id = {i["id"]: i["deliveryId"] for i in practice_service.node_practice(workspace_id, node)["items"]}
+    assert len(set(delivered)) == 2
+    assert (by_id[first], by_id[second], by_id[mine]) == (delivered[0], delivered[1], None)
+
+
+# --- Project instructions (node-projects-and-archive 3.1) -----------------
+
+
+def _project(workspace_id: str, name: str, instructions: str = "") -> str:
+    from service import projects
+
+    graph = projects.create(workspace_id, name)["graph"]
+    project_id = next(p["id"] for p in graph["projects"] if p["name"] == name)
+    if instructions:
+        projects.update(workspace_id, project_id, instructions=instructions)
+    return project_id
+
+
+def _node_in(workspace_id: str, project_id: str) -> tuple[str, str]:
+    graph = workspace.create_root_node(workspace_id, "Node", project_id=project_id)["graph"]
+    node = graph["nodes"][-1]["id"]
+    return node, next(t["id"] for t in graph["threads"] if t["nodeId"] == node)
+
+
+async def test_a_new_session_in_a_project_with_instructions_carries_them_labelled(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node_in(workspace_id, _project(workspace_id, "Algebra", "Use examples first."))
+    agent = FakeAgent()
+
+    await _run(_service(data_dir, {agent_id: agent}), account, thread, "hello")
+
+    assert agent.sessions["s1"] == ['Project "Algebra" instructions:\nUse examples first.\n\nhello']
+
+
+async def test_a_project_without_instructions_adds_nothing(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node(workspace_id)
+    agent = FakeAgent()
+    service = _service(data_dir, {agent_id: agent})
+
+    await _run(service, account, thread, "one")
+    await _run(service, account, thread, "two")
+
+    assert agent.sessions["s1"] == ["one", "two"]
+
+
+async def test_the_project_block_sits_after_the_orientation_and_before_the_origin(account):
+    from service.context_server.orientation import ORIENTATION_NOTE
+
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    project = _project(workspace_id, "Algebra", "Be brief.")
+    _, parent_thread = _node_in(workspace_id, project)
+    workspace.append_message(workspace_id, parent_thread, "agent", "A group has an identity.")
+    message = _messages(parent_thread)[-1]
+    parent = workspace.bootstrap(workspace_id)["graph"]["nodes"][-1]["id"]
+    branch = workspace.create_branch_node(
+        workspace_id, parent, {"messageId": message.id, "start": 0, "end": 7, "excerpt": "A group"}
+    )["graph"]
+    child_thread = next(t["id"] for t in branch["threads"] if t["nodeId"] == branch["nodes"][-1]["id"])
+    agent = FakeAgent()
+
+    await _run(_service_with_context(data_dir, {agent_id: agent}, _Context()), account, child_thread, "go")
+
+    [prompt] = agent.sessions["s1"]
+    assert prompt.startswith(ORIENTATION_NOTE)
+    assert prompt.index(ORIENTATION_NOTE) < prompt.index('Project "Algebra" instructions:') < prompt.index("A group has")
+    assert prompt.endswith("go")
+
+
+async def test_edited_instructions_reach_an_ongoing_session_once(account):
+    from service import projects
+
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    project = _project(workspace_id, "Algebra", "Be brief.")
+    _, thread = _node_in(workspace_id, project)
+    agent = FakeAgent()
+    service = _service(data_dir, {agent_id: agent})
+    await _run(service, account, thread, "one")
+
+    projects.update(workspace_id, project, instructions="Be thorough.")
+    await _run(service, account, thread, "two")
+    await _run(service, account, thread, "three")
+
+    assert agent.sessions["s1"][1:] == [
+        'The project for this session is now "Algebra". Its instructions:\nBe thorough.\n\ntwo',
+        "three",
+    ]
+
+
+async def test_emptied_instructions_are_told_once_as_none(account):
+    from service import projects
+
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    project = _project(workspace_id, "Algebra", "Be brief.")
+    _, thread = _node_in(workspace_id, project)
+    agent = FakeAgent()
+    service = _service(data_dir, {agent_id: agent})
+    await _run(service, account, thread, "one")
+
+    projects.update(workspace_id, project, instructions="")
+    await _run(service, account, thread, "two")
+    await _run(service, account, thread, "three")
+
+    assert agent.sessions["s1"][1:] == [
+        'The project for this session is now "Algebra". It has no instructions.\n\ntwo',
+        "three",
+    ]
+
+
+async def test_moving_a_session_tells_the_agent_its_new_project(account):
+    from service import projects
+
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    algebra = _project(workspace_id, "Algebra", "Be brief.")
+    topology = _project(workspace_id, "Topology", "Draw pictures.")
+    node, thread = _node_in(workspace_id, algebra)
+    agent = FakeAgent()
+    service = _service(data_dir, {agent_id: agent})
+    await _run(service, account, thread, "one")
+
+    projects.move_node(workspace_id, node, topology)
+    await _run(service, account, thread, "two")
+    await _run(service, account, thread, "three")
+
+    assert agent.sessions["s1"][1:] == [
+        'The project for this session is now "Topology". Its instructions:\nDraw pictures.\n\ntwo',
+        "three",
+    ]
+
+
+async def test_a_renamed_project_is_told_once(account):
+    from service import projects
+
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    project = _project(workspace_id, "Algebra", "Be brief.")
+    _, thread = _node_in(workspace_id, project)
+    agent = FakeAgent()
+    service = _service(data_dir, {agent_id: agent})
+    await _run(service, account, thread, "one")
+
+    projects.update(workspace_id, project, name="Abstract algebra")
+    await _run(service, account, thread, "two")
+
+    assert agent.sessions["s1"][1].startswith('The project for this session is now "Abstract algebra".')
+
+
+async def test_a_session_never_told_anything_is_not_told_the_default_has_no_instructions(account):
+    # A session that predates projects has no recorded context.
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node(workspace_id)
+    agent = FakeAgent()
+    service = _service(data_dir, {agent_id: agent})
+    await _run(service, account, thread, "one")
+    with session_scope() as session:
+        for row in session.exec(select(AgentSessionRecord)).all():
+            row.project_context = None
+
+    await _run(service, account, thread, "two")
+
+    assert agent.sessions["s1"] == ["one", "two"]
+
+
+async def test_a_loaded_session_is_not_told_again_after_a_restart(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node_in(workspace_id, _project(workspace_id, "Algebra", "Be brief."))
+    before = FakeAgent()
+    await _run(_service(data_dir, {agent_id: before}), account, thread, "one")
+    after = FakeAgent(sessions=before.sessions)
+
+    await _run(_service(data_dir, {agent_id: after}), account, thread, "two")
+
+    assert after.sessions["s1"][1] == "two"
+
+
+async def test_a_new_agent_session_for_the_same_thread_is_told_afresh(account):
+    profile_id, workspace_id, data_dir = account
+    first = _register(profile_id, "Codex")
+    second = _register(profile_id, "Claude")
+    node, thread = _node_in(workspace_id, _project(workspace_id, "Algebra", "Be brief."))
+    agents = {first: FakeAgent(), second: FakeAgent()}
+    service = _service(data_dir, agents)
+    await _run(service, account, thread, "one")
+    workspace.set_node_backend(workspace_id, node, second)
+
+    await _run(service, account, thread, "two")
+
+    assert 'Project "Algebra" instructions:\nBe brief.' in agents[second].sessions["s1"][0]
+
+
+async def test_membership_not_reachability_decides_which_instructions_apply(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    parent_project = _project(workspace_id, "B-parent", "Parent rules.")
+    child_project = _project(workspace_id, "A-child", "Child rules.")
+    _, parent_thread = _node_in(workspace_id, parent_project)
+    workspace.append_message(workspace_id, parent_thread, "agent", "Something to branch from.")
+    message = _messages(parent_thread)[-1]
+    parent = workspace.bootstrap(workspace_id)["graph"]["nodes"][-1]["id"]
+    graph = workspace.create_branch_node(
+        workspace_id, parent, {"messageId": message.id, "start": 0, "end": 9, "excerpt": "Something"},
+        project_id=child_project,
+    )["graph"]
+    child_thread = next(t["id"] for t in graph["threads"] if t["nodeId"] == graph["nodes"][-1]["id"])
+    agent = FakeAgent()
+
+    await _run(_service(data_dir, {agent_id: agent}), account, child_thread, "go")
+
+    [prompt] = agent.sessions["s1"]
+    assert 'Project "A-child" instructions:\nChild rules.' in prompt
+    assert "Parent rules." not in prompt

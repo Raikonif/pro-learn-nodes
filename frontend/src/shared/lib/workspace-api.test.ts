@@ -33,11 +33,23 @@ const INVOCATIONS: Record<string, () => Promise<unknown>> = {
   appendMessage: () => workspaceApi.appendMessage('thread-1', 'learner', 'hello'),
   saveWorkspaceContext: () => workspaceApi.saveWorkspaceContext('node-1', { x: 1 }),
   setNodeBackend: () => workspaceApi.setNodeBackend('node-1', 'agent-1'),
+  setNodeAgentSettings: () => workspaceApi.setNodeAgentSettings('node-1', { model: 'opus' }),
   createRootNode: () => workspaceApi.createRootNode({ title: 'Monads', mode: 'Deepen' }),
   renameNode: () => workspaceApi.renameNode('node-1', 'Renamed'),
   archiveNode: () => workspaceApi.archiveNode('node-1'),
   restoreNode: () => workspaceApi.restoreNode('node-1'),
   searchSessions: () => workspaceApi.searchSessions('monads', { includeArchived: true }),
+  createProject: () => workspaceApi.createProject('Algebra'),
+  updateProject: () => workspaceApi.updateProject('project-1', { name: 'Algebra II' }),
+  archiveProject: () => workspaceApi.archiveProject('project-1'),
+  restoreProject: () => workspaceApi.restoreProject('project-1'),
+  deleteProject: () => workspaceApi.deleteProject('project-1'),
+  moveNodeToProject: () => workspaceApi.moveNodeToProject('node-1', 'project-1'),
+  loadArchivedProjects: () => workspaceApi.loadArchivedProjects(),
+}
+
+const ARCHIVED_PROJECTS = {
+  projects: [{ id: 'project-1', name: 'Algebra', archivedAt: '2026-09-02T10:00:00.000Z', nodeCount: 3 }],
 }
 
 const SEARCH = {
@@ -54,13 +66,17 @@ const SEARCH = {
   ],
 }
 
-/** Answers the search route with results and every other route with a snapshot. */
+/** Answers the search and archived-projects routes with their lists and every other route with a snapshot. */
 function routedFetch() {
-  return vi.fn<typeof fetch>((input) =>
-    Promise.resolve(
-      new Response(JSON.stringify(String(input).includes('/sessions/search') ? SEARCH : SNAPSHOT)),
-    ),
-  )
+  return vi.fn<typeof fetch>((input) => {
+    const url = String(input)
+    const body = url.includes('/sessions/search')
+      ? SEARCH
+      : url.includes('/projects/archived')
+        ? ARCHIVED_PROJECTS
+        : SNAPSHOT
+    return Promise.resolve(new Response(JSON.stringify(body)))
+  })
 }
 
 function lastCall(fetchMock: ReturnType<typeof routedFetch>) {
@@ -125,6 +141,20 @@ describe('workspace api', () => {
     expect(init?.body).toBe(JSON.stringify({ agentId: 'agent-1' }))
   })
 
+  it('puts a node\'s agent settings, sending only the keys given (null resets one)', async () => {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(JSON.stringify(SNAPSHOT))),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await workspaceApi.setNodeAgentSettings('node 1', { model: null, mode: 'auto', confirmedUnasked: true })
+
+    const [url, init] = fetchMock.mock.calls[0] ?? []
+    expect(url).toBe('/api/workspace/nodes/node%201/agent-settings')
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(init?.body as string)).toEqual({ model: null, mode: 'auto', confirmedUnasked: true })
+  })
+
   it('creates a root session with nothing chosen as an empty body', async () => {
     const fetchMock = routedFetch()
     vi.stubGlobal('fetch', fetchMock)
@@ -186,8 +216,106 @@ describe('workspace api', () => {
     })
   })
 
-  it('offers no way to delete a session', () => {
-    expect(exportedHelpers().filter((name) => /delete/i.test(name))).toEqual([])
+  it('reaches the project routes with the contract methods and bodies', async () => {
+    const fetchMock = routedFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const calls: Array<[() => Promise<unknown>, string, string, unknown]> = [
+      [() => workspaceApi.createProject('Algebra'), '/api/workspace/projects', 'POST', { name: 'Algebra' }],
+      [
+        () => workspaceApi.updateProject('project-1', { instructions: 'Be terse' }),
+        '/api/workspace/projects/project-1',
+        'PATCH',
+        { instructions: 'Be terse' },
+      ],
+      [() => workspaceApi.archiveProject('project-1'), '/api/workspace/projects/project-1/archive', 'POST', {}],
+      [() => workspaceApi.restoreProject('project-1'), '/api/workspace/projects/project-1/restore', 'POST', {}],
+      [() => workspaceApi.deleteProject('project-1'), '/api/workspace/projects/project-1', 'DELETE', undefined],
+      [
+        () => workspaceApi.moveNodeToProject('node-1', 'project-1'),
+        '/api/workspace/nodes/node-1/project',
+        'PUT',
+        { projectId: 'project-1' },
+      ],
+    ]
+    for (const [invoke, url, method, body] of calls) {
+      await invoke()
+      const call = lastCall(fetchMock)
+      expect(call).toMatchObject({ url, method })
+      expect(call.body === undefined ? undefined : JSON.parse(String(call.body))).toEqual(body)
+    }
+  })
+
+  it('reads the archived projects as a list', async () => {
+    vi.stubGlobal('fetch', routedFetch())
+    await expect(workspaceApi.loadArchivedProjects()).resolves.toEqual(ARCHIVED_PROJECTS.projects)
+  })
+
+  it('names the project on creation only when one is chosen', async () => {
+    const fetchMock = routedFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await workspaceApi.createRootNode({ title: 'Monads' })
+    expect(JSON.parse(String(lastCall(fetchMock).body))).toEqual({ title: 'Monads' })
+
+    await workspaceApi.createRootNode({ projectId: 'project-1' })
+    expect(JSON.parse(String(lastCall(fetchMock).body))).toEqual({ projectId: 'project-1' })
+
+    await workspaceApi.branchNode('node-1', ANCHOR, undefined, 'project-2')
+    expect(JSON.parse(String(lastCall(fetchMock).body))).toMatchObject({ projectId: 'project-2' })
+  })
+
+  it('surfaces the backend reason when a restore or project action is refused', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(new Response(JSON.stringify({ detail: 'Restore the project Algebra first' }), { status: 422 })),
+      ),
+    )
+    await expect(workspaceApi.restoreNode('node-1')).rejects.toThrow('Restore the project Algebra first')
+    await expect(workspaceApi.archiveProject('project-1')).rejects.toThrow('Restore the project Algebra first')
+  })
+
+  it('parses a snapshot that predates projects, and one that carries them', () => {
+    const old = workspaceApi.WorkspaceBootstrapSchema.parse({
+      ...SNAPSHOT,
+      graph: {
+        nodes: [
+          {
+            id: 'n',
+            title: 'T',
+            mode: 'Explore',
+            body: '',
+            activeSkills: [],
+            mcpServers: [],
+            createdAt: '2026-08-01T00:00:00.000Z',
+            lastOpenedAt: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+        links: [],
+        threads: [],
+        messages: [],
+      },
+    })
+    expect(old.graph.projects).toEqual([])
+    expect(old.graph.archivedLinks).toEqual([])
+    expect(old.graph.nodes[0].projectId).toBeNull()
+
+    const current = workspaceApi.WorkspaceBootstrapSchema.parse({
+      ...SNAPSHOT,
+      graph: {
+        ...SNAPSHOT.graph,
+        projects: [
+          { id: 'p', name: 'General', instructions: '', isDefault: true, createdAt: '2026-08-01T00:00:00.000Z' },
+        ],
+        archivedLinks: [{ nodeId: 'a', archivedNodeId: 'b', archivedTitle: 'B' }],
+      },
+    })
+    expect(current.graph.projects[0]).toMatchObject({ id: 'p', isDefault: true })
+    expect(current.graph.archivedLinks).toEqual([{ nodeId: 'a', archivedNodeId: 'b', archivedTitle: 'B' }])
+  })
+
+  it('offers no way to delete a session — only a project, whose sessions move', () => {
+    expect(exportedHelpers().filter((name) => /delete/i.test(name))).toEqual(['deleteProject'])
   })
 
   it('searches with the query and the archived flag in the query string', async () => {

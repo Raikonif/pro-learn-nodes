@@ -35,9 +35,12 @@ const DeliveryDataSchema = z.object({
 const NotDeliveredDataSchema = z.object({ tool: z.enum(['code', 'qa', 'quiz']) })
 
 /** The `data` of a recorded `practice_delivered` message, or `null` if it is not usable. */
-export function readDelivery(data: unknown): { tool: DeliveredTool; itemIds: string[] } | null {
+export function readDelivery(
+  messageId: string,
+  data: unknown,
+): { tool: DeliveredTool; messageId: string; itemIds: string[] } | null {
   const parsed = DeliveryDataSchema.safeParse(data)
-  return parsed.success ? parsed.data : null
+  return parsed.success ? { ...parsed.data, messageId } : null
 }
 
 /** The tool a `practice_not_delivered` notice names, or `null`. */

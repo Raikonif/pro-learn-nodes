@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlmodel import select
 
 from api.dependencies.auth import get_profile_service
+from repository import project_repo
 from core.database import session_scope
 from core.exceptions import ValidationError
 from core import migrations
@@ -67,6 +68,7 @@ def seed_conversation(workspace_id: str) -> tuple[str, str, str]:
     with session_scope() as session:
         node = WorkspaceNodeRecord(
             workspace_id=workspace_id,
+            project_id=project_repo.default_for(session, workspace_id).id,
             title="Persistence node",
             mode="Explore",
         )
@@ -106,7 +108,11 @@ async def test_first_launch_bootstrap_is_empty_and_revisioned(ready_client: Asyn
     second = await bootstrap(ready_client)
     assert first["schemaVersion"] == 1
     assert first["revision"] == 0
-    assert first["graph"] == {"nodes": [], "links": [], "threads": [], "messages": []}
+    graph = first["graph"]
+    assert (graph["nodes"], graph["links"], graph["threads"], graph["messages"]) == ([], [], [], [])
+    # A workspace is born with its default project, and no archived links.
+    assert [(p["name"], p["isDefault"], p["instructions"]) for p in graph["projects"]] == [("General", True, "")]
+    assert graph["archivedLinks"] == []
     assert second["workspaceId"] == first["workspaceId"]
 
 
@@ -238,6 +244,7 @@ def test_validation_rejects_a_node_without_its_main_thread(tmp_path: Path):
         session.add(
             WorkspaceNodeRecord(
                 workspace_id=workspace_id,
+            project_id=project_repo.default_for(session, workspace_id).id,
                 title="Broken node",
                 mode="Explore",
             )

@@ -93,6 +93,7 @@ export function createFakePracticeBackend() {
         starterCode: body.starterCode ?? null,
         expectedOutput: body.expectedOutput ?? null,
         authoredBy: null,
+        deliveryId: null,
       }
       node(nodeId).items.push(item)
       return json(item)
@@ -173,6 +174,7 @@ export function createFakePracticeBackend() {
       starterCode: null,
       expectedOutput: null,
       authoredBy: null,
+      deliveryId: null,
       ...fields,
     }
     node(nodeId).items.push(item)

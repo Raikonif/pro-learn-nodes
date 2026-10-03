@@ -453,12 +453,13 @@ describe('NodeConversation — conversation backend', () => {
     })
   })
 
-  it('says compaction and skill merging are unavailable, and why, with no control for them', () => {
+  it("says Learn Nodes' compaction and skill merging are unavailable, and why, pointing to the agent's own /compact", () => {
     openHaskell()
 
     const note = screen.getByTestId('agent-backend-limits')
-    expect(note).toHaveTextContent('Compaction and skill merging are unavailable on agent backends')
+    expect(note).toHaveTextContent("Learn Nodes' drill-down compaction and skill merging are unavailable on agent backends")
     expect(note).toHaveTextContent('the agent manages its own context')
+    expect(note).toHaveTextContent('/compact')
     expect(screen.queryByRole('button', { name: /compact|summari|skill|merge/i })).not.toBeInTheDocument()
   })
 

@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import select
 
+from repository import project_repo
 from core.database import configure_database, database_path, session_scope
 from core.exceptions import NotFoundError, ValidationError
 from core.migrations import migrate_database
@@ -132,8 +133,10 @@ def _populate(workspace_id: str) -> None:
     """
 
     with session_scope() as session:
-        parent = WorkspaceNodeRecord(workspace_id=workspace_id, title="Root", mode="Explore")
-        child = WorkspaceNodeRecord(workspace_id=workspace_id, title="Branch", mode="Explore")
+        parent = WorkspaceNodeRecord(workspace_id=workspace_id,
+            project_id=project_repo.default_for(session, workspace_id).id, title="Root", mode="Explore")
+        child = WorkspaceNodeRecord(workspace_id=workspace_id,
+            project_id=project_repo.default_for(session, workspace_id).id, title="Branch", mode="Explore")
         session.add(parent)
         session.add(child)
         session.flush()

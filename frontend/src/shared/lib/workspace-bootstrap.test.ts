@@ -54,7 +54,7 @@ function response(body: unknown): Response {
 
 function resetRuntimeStore(): void {
   useWorkspaceStore.setState({
-    graph: { nodes: [], links: [], threads: [], messages: [] },
+    graph: { nodes: [], links: [], threads: [], messages: [], projects: [], archivedLinks: [] },
     workspaceId: null,
     revision: null,
     viewport: {},

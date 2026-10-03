@@ -114,6 +114,64 @@ describe('WorkspaceNodeSchema — session history fields', () => {
   })
 })
 
+describe('WorkspaceNodeSchema — agent session controls', () => {
+  const wire = {
+    id: 'n-1',
+    title: 'Monads',
+    mode: 'Explore',
+    body: '',
+    activeSkills: [],
+    mcpServers: [],
+    createdAt: '2026-09-01T10:00:00.000Z',
+    lastOpenedAt: '2026-09-02T10:00:00.000Z',
+  }
+
+  it('reads the learner\'s choices and what the session last ran with', () => {
+    const node = WorkspaceNodeSchema.parse({
+      ...wire,
+      agentSettings: { model: 'opus', fast: 'on' },
+      agentState: { model: 'opus', effort: 'high', fast: 'on', mode: 'auto', modeGroup: 'unasked' },
+    })
+    expect(node.agentSettings).toEqual({ model: 'opus', fast: 'on' })
+    expect(node.agentState).toEqual({ model: 'opus', effort: 'high', fast: 'on', mode: 'auto', modeGroup: 'unasked' })
+  })
+
+  it('reads a node from before session controls as having neither', () => {
+    const node = WorkspaceNodeSchema.parse(wire)
+    expect(node.agentSettings ?? null).toBeNull()
+    expect(node.agentState ?? null).toBeNull()
+  })
+
+  it('reads an unrecognised or missing mode group as acting without asking', () => {
+    const node = WorkspaceNodeSchema.parse({
+      ...wire,
+      agentState: { model: null, effort: null, fast: null, mode: 'mystery', modeGroup: 'sideways' },
+    })
+    expect(node.agentState?.modeGroup).toBe('unasked')
+    const bare = WorkspaceNodeSchema.parse({ ...wire, agentState: { mode: 'x' } })
+    expect(bare.agentState).toEqual({ model: null, effort: null, fast: null, mode: 'x', modeGroup: 'unasked' })
+  })
+
+  it('reads a state with no mode at all as having no group', () => {
+    const node = WorkspaceNodeSchema.parse({ ...wire, agentState: { model: 'opus' } })
+    expect(node.agentState?.modeGroup).toBeNull()
+  })
+})
+
+describe('ChatMessageSchema — settings notices', () => {
+  it('reads a notice that a choice is no longer offered', () => {
+    const message = ChatMessageSchema.parse({
+      id: 'm-1',
+      threadId: 't-1',
+      role: 'agent',
+      content: 'The chosen model “gpt-5” is no longer offered; the agent default was used.',
+      createdAt: '2026-10-02T10:00:00Z',
+      kind: 'settings_notice',
+    })
+    expect(message.kind).toBe('settings_notice')
+  })
+})
+
 describe('ChatMessageSchema — delivery records', () => {
   const base = {
     id: 'm-1',

@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  Project,
   ChatThread,
   NodeLink,
   SelectionAnchor,
@@ -64,6 +65,22 @@ function staleAnchorAt(
   return { ...anchor, excerpt: originalExcerpt }
 }
 
+// ── Projects ─────────────────────────────────────────────────────────────
+// The fixture workspace has only its default project, as a fresh account does.
+// Tests that need more build them with the store's project actions.
+
+export const FIXTURE_DEFAULT_PROJECT_ID = 'p-general'
+
+export const FIXTURE_PROJECTS: Project[] = [
+  {
+    id: FIXTURE_DEFAULT_PROJECT_ID,
+    name: 'General',
+    instructions: '',
+    isDefault: true,
+    createdAt: '2026-08-01T08:00:00.000Z',
+  },
+]
+
 // ── Nodes ────────────────────────────────────────────────────────────────
 // `lastActivityAt` drives session-history ordering: Functors, Haskell,
 // Category Theory, Lazy Evaluation, then Functional Programming.
@@ -80,6 +97,7 @@ export const NODE_FP: WorkspaceNode = {
   lastOpenedAt: '2026-08-01T09:40:00.000Z',
   lastActivityAt: '2026-08-01T09:40:00.000Z',
   titleSource: 'topic',
+  projectId: FIXTURE_DEFAULT_PROJECT_ID,
 }
 
 export const NODE_HASKELL: WorkspaceNode = {
@@ -94,6 +112,7 @@ export const NODE_HASKELL: WorkspaceNode = {
   lastOpenedAt: '2026-08-12T14:05:00.000Z',
   lastActivityAt: '2026-08-12T14:05:00.000Z',
   titleSource: 'topic',
+  projectId: FIXTURE_DEFAULT_PROJECT_ID,
 }
 
 export const NODE_CATEGORY_THEORY: WorkspaceNode = {
@@ -108,6 +127,7 @@ export const NODE_CATEGORY_THEORY: WorkspaceNode = {
   lastOpenedAt: '2026-08-10T16:20:00.000Z',
   lastActivityAt: '2026-08-10T16:20:00.000Z',
   titleSource: 'topic',
+  projectId: FIXTURE_DEFAULT_PROJECT_ID,
 }
 
 export const NODE_FUNCTORS: WorkspaceNode = {
@@ -122,6 +142,7 @@ export const NODE_FUNCTORS: WorkspaceNode = {
   lastOpenedAt: '2026-08-14T18:30:00.000Z',
   lastActivityAt: '2026-08-14T18:30:00.000Z',
   titleSource: 'topic',
+  projectId: FIXTURE_DEFAULT_PROJECT_ID,
 }
 
 export const NODE_LAZY_EVALUATION: WorkspaceNode = {
@@ -136,6 +157,7 @@ export const NODE_LAZY_EVALUATION: WorkspaceNode = {
   lastOpenedAt: '2026-08-04T15:10:00.000Z',
   lastActivityAt: '2026-08-04T15:10:00.000Z',
   titleSource: 'topic',
+  projectId: FIXTURE_DEFAULT_PROJECT_ID,
 }
 
 export const FIXTURE_NODES: WorkspaceNode[] = [
@@ -464,6 +486,8 @@ export const FIXTURE_GRAPH: WorkspaceGraph = {
   links: FIXTURE_LINKS,
   threads: FIXTURE_THREADS,
   messages: FIXTURE_MESSAGES,
+  projects: FIXTURE_PROJECTS,
+  archivedLinks: [],
 }
 
 // ── Selectors ────────────────────────────────────────────────────────────

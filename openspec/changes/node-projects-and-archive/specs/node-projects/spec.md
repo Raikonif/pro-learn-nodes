@@ -97,13 +97,18 @@ When a node is created by branching from an existing node, the system SHALL give
 - **WHEN** a learner branches a new node from a node in one project and names a different project at creation
 - **THEN** the new node belongs to the named project and the link back to the source node is created and preserved
 
-### Requirement: Deleting a project does not delete its nodes
-The system SHALL treat deleting a project as distinct from deleting nodes. Deleting a project SHALL state what will happen before it happens and SHALL require a confirmation. On confirmation, every node that belonged to the deleted project SHALL be moved to the workspace's default project with its content and links intact.
+### Requirement: Projects are reached from the left rail and the command palette
+The left rail SHALL offer a project filter above the session history — all projects, or one — and SHALL offer creating, renaming, archiving, and deleting a project, editing its instructions, and moving a session to another project. The command palette SHALL offer showing one project or all, creating a project, and moving the open session to a project. The filter SHALL be a view preference of this device and SHALL NOT change any node.
 
-#### Scenario: Deletion is confirmed before it happens
-- **WHEN** a learner asks to delete a project
-- **THEN** the system states that the project's nodes will be moved to the default project and proceeds only after the learner confirms
+#### Scenario: Filtering the history to one project
+- **WHEN** the learner chooses one project in the filter
+- **THEN** the history lists only that project's sessions, still grouped by day, and the canvas and search are unchanged
 
-#### Scenario: Nodes survive their project's deletion
-- **WHEN** a learner confirms deletion of a project holding nodes
-- **THEN** the project is gone, each of its nodes belongs to the default project, and every node's conversations and links are intact
+#### Scenario: Moving the open session from the palette
+- **WHEN** a node is open and the learner invokes "Move session to Algebra" in the palette
+- **THEN** the node belongs to Algebra and its conversations and links are unchanged
+
+#### Scenario: The filter survives a restart
+- **WHEN** the learner filters to a project and restarts the application
+- **THEN** the history is still filtered to that project
+

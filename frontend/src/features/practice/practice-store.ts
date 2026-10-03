@@ -12,21 +12,17 @@ import {
   type PracticeAttempt,
   type PracticeItem,
 } from './practice-api'
+import { EMPTY_ARRANGEMENT, readArrangements, writeArrangements, type Arrangement } from './workbench/arrangement'
+import type { BlockKey } from './workbench/blocks'
 
-/** The three peer tools of the practice region, in tab order. */
-export type PracticeTool = 'questions' | 'sandbox' | 'quiz'
-
-/** The tools as the turn stream and the recorded conversation name them. */
+/** The kinds of practice as the turn stream and the recorded conversation name them. */
 export type DeliveredTool = 'code' | 'qa' | 'quiz'
 
-const TOOL_FOR_DELIVERY: Record<DeliveredTool, PracticeTool> = {
-  code: 'sandbox',
-  qa: 'questions',
-  quiz: 'quiz',
-}
+/** What to bring into view: a node's block, with the delivered items in it. */
+export type PracticeReveal = { nodeId: string; block: BlockKey; itemIds: string[] }
 
-/** What to bring into view: a node's tool, with the delivered items in it. */
-export type PracticeReveal = { nodeId: string; tool: DeliveredTool; itemIds: string[] }
+/** A block opened from the add control to write into: its form starts open. */
+export type AuthoringRequest = { nodeId: string; block: BlockKey; seq: number }
 
 /**
  * One node's practice material. `failed` is a state of its own so a tool can
@@ -71,21 +67,28 @@ function splitKey(key: string): { nodeId: string; itemId: string | undefined } {
 
 export type PracticeState = {
   /**
-   * The selected tool. A view preference of this window: it survives opening
-   * another node and is never sent to the backend or written into node data.
+   * How each node's workbench is arranged. A view preference of this device:
+   * kept in local storage, never sent to the backend or written into node data.
    */
-  selectedTool: PracticeTool
+  arrangements: Record<string, Arrangement>
   material: Record<string, NodeMaterial>
+  /** When each node's free buffer was last saved, as the backend reported it — orders the scratch block. */
+  scratchUpdatedAt: Record<string, string | null>
   /** Code per buffer (see `bufferKey`) — owned here, not by the sandbox component. */
   buffers: Record<string, string>
   sandboxSave: Record<string, SandboxSaveStatus>
   /** Exercise buffers being read, or whose read failed. */
   bufferLoads: Record<string, BufferLoad>
-  /** The exercise the Code tool has open per node; `null` (or absent) is the free sandbox. */
-  selectedExercise: Record<string, string | null>
   highlight: PracticeHighlight | null
-  selectTool: (tool: PracticeTool) => void
-  selectExercise: (nodeId: string, itemId: string | null) => void
+  authoring: AuthoringRequest | null
+  /** Expands one block (collapsing the one that was); `null` collapses everything. */
+  expandBlock: (nodeId: string, block: BlockKey | null) => void
+  /** Hides a block from the list; nothing in it changes. */
+  closeBlock: (nodeId: string, block: BlockKey) => void
+  /** Opens a block — reopening it if closed, listing it even while empty — and expands it. */
+  openBlock: (nodeId: string, block: BlockKey, options?: { author?: boolean }) => void
+  /** The authoring request was acted on. */
+  consumeAuthoring: () => void
   /** Reads (or re-reads, as a retry) a node's practice material. */
   load: (nodeId: string) => Promise<void>
   /** Reads an exercise's buffer unless it is already held. Never rejects. */
@@ -103,8 +106,8 @@ export type PracticeState = {
   /** Writes every pending edit of the node — its free buffer and each exercise's. */
   flushNode: (nodeId: string) => Promise<void>
   /**
-   * Brings delivered practice into view: re-reads the node, selects its tool,
-   * opens a code exercise, and highlights the items for a few seconds.
+   * Brings delivered practice into view: re-reads the node, reopens and
+   * expands its block, and highlights the items for a few seconds.
    */
   reveal: (reveal: PracticeReveal) => void
   /** Forgets everything — the material belongs to the account that loaded it. */
@@ -165,19 +168,51 @@ export const usePracticeStore = create<PracticeState>((set, get) => {
     }
   }
 
+  function arrange(nodeId: string, change: (current: Arrangement) => Arrangement): void {
+    const current = get().arrangements[nodeId] ?? EMPTY_ARRANGEMENT
+    const arrangements = { ...get().arrangements, [nodeId]: change(current) }
+    set({ arrangements })
+    writeArrangements(arrangements)
+  }
+
+  function show(current: Arrangement, block: BlockKey): Arrangement {
+    return { ...current, expanded: block, closed: current.closed.filter((key) => key !== block) }
+  }
+
   return {
-    selectedTool: 'questions',
+    arrangements: readArrangements(),
     material: {},
+    scratchUpdatedAt: {},
     buffers: {},
     sandboxSave: {},
     bufferLoads: {},
-    selectedExercise: {},
     highlight: null,
+    authoring: null,
 
-    selectTool: (tool) => set({ selectedTool: tool }),
+    expandBlock: (nodeId, block) => arrange(nodeId, (current) => ({ ...current, expanded: block })),
 
-    selectExercise: (nodeId, itemId) =>
-      set({ selectedExercise: { ...get().selectedExercise, [nodeId]: itemId } }),
+    closeBlock: (nodeId, block) =>
+      arrange(nodeId, (current) => ({
+        ...current,
+        // With no choice stored, the block being closed is the one shown by
+        // default; closing it should leave everything collapsed, not promote
+        // the next block into its place.
+        expanded: current.expanded === block || current.expanded === undefined ? null : current.expanded,
+        closed: current.closed.includes(block) ? current.closed : [...current.closed, block],
+      })),
+
+    openBlock: (nodeId, block, options) => {
+      arrange(nodeId, (current) => ({
+        ...show(current, block),
+        opened: current.opened[block] ? current.opened : { ...current.opened, [block]: new Date().toISOString() },
+      }))
+      if (options?.author) {
+        highlightSeq += 1
+        set({ authoring: { nodeId, block, seq: highlightSeq } })
+      }
+    },
+
+    consumeAuthoring: () => set({ authoring: null }),
 
     load: async (nodeId) => {
       const token = (loadTokens.get(nodeId) ?? 0) + 1
@@ -201,6 +236,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => {
       const { items, attempts, sandbox } = result.material
       set({
         material: { ...get().material, [nodeId]: { status: 'ready', items, attempts } },
+        scratchUpdatedAt: { ...get().scratchUpdatedAt, [nodeId]: sandbox.updatedAt },
         // An edit not yet written is newer than anything the backend holds.
         buffers: unsaved.has(nodeId) ? get().buffers : { ...get().buffers, [nodeId]: sandbox.code },
       })
@@ -269,19 +305,15 @@ export const usePracticeStore = create<PracticeState>((set, get) => {
       await Promise.all(keys.map((key) => flushKey(key)))
     },
 
-    reveal: ({ nodeId, tool, itemIds }) => {
+    reveal: ({ nodeId, block, itemIds }) => {
       highlightSeq += 1
       const seq = highlightSeq
       if (highlightTimer !== undefined) clearTimeout(highlightTimer)
       highlightTimer = setTimeout(() => {
         if (get().highlight?.seq === seq) set({ highlight: null })
       }, PRACTICE_HIGHLIGHT_MS)
-      const exercise = tool === 'code' ? itemIds[0] : undefined
-      set({
-        selectedTool: TOOL_FOR_DELIVERY[tool],
-        highlight: { nodeId, itemIds, seq },
-        ...(exercise ? { selectedExercise: { ...get().selectedExercise, [nodeId]: exercise } } : {}),
-      })
+      set({ highlight: { nodeId, itemIds, seq } })
+      arrange(nodeId, (current) => show(current, block))
       // The delivered items were written by another connection; re-read so
       // they are on screen.
       void get().load(nodeId)
@@ -293,14 +325,16 @@ export const usePracticeStore = create<PracticeState>((set, get) => {
       highlightTimer = undefined
       unsaved.clear()
       loadTokens.clear()
+      // The arrangement stays: it is this device's view of node ids, and
+      // another account never sees those nodes.
       set({
-        selectedTool: 'questions',
         material: {},
+        scratchUpdatedAt: {},
         buffers: {},
         sandboxSave: {},
         bufferLoads: {},
-        selectedExercise: {},
         highlight: null,
+        authoring: null,
       })
     },
   }

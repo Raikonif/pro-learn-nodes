@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
+import { ProjectPicker, preselectedProject } from '../../projects'
 import type { NodeMode } from '../../../shared/lib/workspace-types'
+import { useLauncher } from '../launcher-store'
 
 /** In the order a learner meets them, not the schema's. */
 export const LEARNING_MODES: readonly NodeMode[] = ['Explore', 'Deepen', 'Review', 'Practice', 'Quiz']
@@ -26,20 +28,48 @@ const TRIGGER_CLASSES = {
  * backdrop — creates nothing.
  */
 function DetailedStart({ variant = 'compact' }: DetailedStartProps) {
-  const [open, setOpen] = useState(false)
+  const open = useLauncher((s) => s.detailedOpen)
+  const openDetailed = useLauncher((s) => s.openDetailed)
+  const closeDetailed = useLauncher((s) => s.closeDetailed)
+  const hosted = useLauncher((s) => s.hosted)
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={TRIGGER_CLASSES[variant]}>
+      <button type="button" onClick={openDetailed} className={TRIGGER_CLASSES[variant]}>
         Start with a topic…
       </button>
-      {open ? <DetailedStartDialog onClose={() => setOpen(false)} /> : null}
+      {open && !hosted ? <DetailedStartDialog onClose={closeDetailed} /> : null}
     </>
   )
 }
 
+/**
+ * The dialog on its own, for a window where the button is not on screen — the
+ * workspace with sessions in it — so the palette can still open it. Mount it
+ * once; while mounted, the button leaves the dialog to it.
+ */
+export function DetailedStartHost() {
+  const open = useLauncher((s) => s.detailedOpen)
+  const closeDetailed = useLauncher((s) => s.closeDetailed)
+  const setHosted = useLauncher((s) => s.setHosted)
+
+  useEffect(() => {
+    setHosted(true)
+    return () => setHosted(false)
+  }, [setHosted])
+
+  return open ? <DetailedStartDialog onClose={closeDetailed} /> : null
+}
+
 function DetailedStartDialog({ onClose }: { onClose: () => void }) {
   const createRootNode = useWorkspaceStore((s) => s.createRootNode)
+  const projects = useWorkspaceStore((s) => s.graph.projects)
+  const projectFilter = useWorkspaceStore((s) => s.projectFilter)
+  // The project the history is looking at, else the default one: the session
+  // lands where the learner is working unless they say otherwise.
+  const [projectId, setProjectId] = useState<string | null>(() =>
+    preselectedProject(projects, projectFilter),
+  )
   const [topic, setTopic] = useState('')
   const [mode, setMode] = useState<NodeMode>('Explore')
   const [pending, setPending] = useState(false)
@@ -68,7 +98,7 @@ function DetailedStartDialog({ onClose }: { onClose: () => void }) {
     setError(null)
     try {
       const title = topic.trim()
-      await createRootNode(title ? { title, mode } : { mode })
+      await createRootNode({ ...(title ? { title } : {}), mode, ...(projectId ? { projectId } : {}) })
       onClose()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -127,6 +157,8 @@ function DetailedStartDialog({ onClose }: { onClose: () => void }) {
             ))}
           </select>
         </div>
+
+        <ProjectPicker projects={projects} value={projectId} onChange={setProjectId} />
 
         {error ? (
           <p role="alert" className="text-xs text-red-700">

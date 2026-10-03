@@ -430,3 +430,45 @@ def test_the_agent_package_exports_the_client():
 
     assert acp.AcpAgent is AcpAgent
     assert Path(acp.__file__).parent.name == "acp"
+
+
+# --- Session controls -----------------------------------------------------------
+
+
+async def test_options_and_commands_are_reported_and_an_option_can_be_changed(fake_agent_command, tmp_path):
+    from service.agent.acp.agent import AcpAgent
+    from service.agent.contract import AgentCommand, ContextUsage, TextChunk
+
+    command, *args = fake_agent_command("--config-options", "--sessions-dir", str(tmp_path / "s"))
+    agent = await AcpAgent.start(AgentCommand(command, tuple(args)))
+    try:
+        session_id = await agent.new_session(tmp_path)
+        await asyncio.sleep(0.2)  # commands are announced just after the answer
+        options = {o.category: o for o in agent.config_options(session_id)}
+        assert set(options) == {"model", "thought_level", "mode", "model_config"}
+        assert (options["model"].current, [v.value for v in options["model"].values]) == ("fast-1", ["fast-1", "smart-2"])
+        assert [c.name for c in agent.available_commands(session_id)] == ["compact", "context", "$archify"]
+
+        after = await agent.set_config_option(session_id, "model", "smart-2")
+        assert next(o for o in after if o.id == "model").current == "smart-2"
+
+        events = [e async for e in agent.prompt(session_id, "whoami")]
+        assert "model=smart-2" in "".join(e.text for e in events if isinstance(e, TextChunk))
+        assert ContextUsage(1234, 200000) in events
+    finally:
+        await agent.close()
+
+
+async def test_an_agent_without_config_options_says_so_clearly(fake_agent_command, tmp_path):
+    from service.agent.acp.agent import AcpAgent
+    from service.agent.contract import AgentCommand, AgentError
+
+    command, *args = fake_agent_command()
+    agent = await AcpAgent.start(AgentCommand(command, tuple(args)))
+    try:
+        session_id = await agent.new_session(tmp_path)
+        assert agent.config_options(session_id) == []
+        with pytest.raises(AgentError, match="could not change model"):
+            await agent.set_config_option(session_id, "model", "x")
+    finally:
+        await agent.close()

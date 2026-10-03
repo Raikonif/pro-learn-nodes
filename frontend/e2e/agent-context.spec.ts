@@ -39,19 +39,27 @@ test.describe('agents and the context server', () => {
     await createProfile(page, 'Context Delivery Spec')
     await register(page, 'Fake Agent')
     await startSession(page, 'Comprehensions')
-    const rail = page.getByRole('tablist', { name: 'Practice tools' }).locator('..')
+    const rail = page.getByTestId('practice-rail')
 
-    // /quiz → the rail switches to Quiz with the two new questions highlighted.
+    // /quiz → a quiz block opens, expanded, with the two new questions highlighted.
     await send(page, '/quiz two questions on comprehensions')
-    await expect(page.getByRole('tab', { name: 'Quiz' })).toHaveAttribute('aria-selected', 'true')
-    await expect(rail.locator('[data-highlighted="true"]')).toHaveCount(2)
-    await expect(rail.getByText('Which builds a list from an iterable?')).toBeVisible()
+    await expect(rail.getByRole('button', { name: /^Quiz: Which builds a list from an iterable\?, by Fake Agent, 2 questions/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await expect(rail.locator('[data-practice-item-id][data-highlighted="true"]')).toHaveCount(2)
+    await expect(rail.getByRole('article', { name: 'Which builds a list from an iterable?' })).toBeVisible()
     await expect(rail.getByText('by Fake Agent').first()).toBeVisible()
     await expect(page.getByTestId('center-region').getByText('Fake Agent sent 2 questions to Quiz')).toBeVisible()
 
-    // /code → Code opens the exercise with its starter code.
+    // /code → the exercise's own block opens with its starter code; the quiz
+    // block stays listed, collapsed to its header.
     await send(page, '/code summing a list')
-    await expect(page.getByRole('tab', { name: 'Code' })).toHaveAttribute('aria-selected', 'true')
+    await expect(rail.getByRole('button', { name: /^Code: Print the sum of numbers/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await expect(rail.getByRole('button', { name: /^Quiz: / })).toHaveAttribute('aria-expanded', 'false')
     await expect(rail.getByRole('region', { name: 'Exercise' })).toContainText('Print the sum of numbers.')
     const code = page.getByLabel('Python code')
     await expect(code).toHaveValue('numbers = [1, 2, 3]\n')

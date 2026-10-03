@@ -1,4 +1,4 @@
-import { practiceToolLabel, revealPractice, type DeliveredTool } from '../../practice'
+import { practiceToolLabel, revealDelivery, type DeliveredTool } from '../../practice'
 import { useAgentsStore } from '../../settings'
 import type { PlanEntry } from '../chat-api'
 import { deliveryText } from '../delivery'
@@ -72,6 +72,37 @@ export function ContinuitySeamNotice({ reason }: { reason: string }) {
   )
 }
 
+/** A session choice the agent no longer offers, which was therefore not sent. */
+export function SettingsNotice({ text }: { text: string }) {
+  return (
+    <div
+      role="note"
+      data-testid="settings-notice"
+      className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900"
+    >
+      {text || 'A session choice is no longer offered by the agent, so its default was used.'}
+    </div>
+  )
+}
+
+/**
+ * What a completed agent turn with no text says instead of an empty bubble.
+ * Legitimate, not a failure: an agent command such as `/compact` can finish
+ * without a reply.
+ */
+export function emptyReplyText(learnerText: string | null | undefined): string {
+  const command = /^\/(\S+)/.exec(learnerText?.trim() ?? '')?.[1]
+  return command ? `Ran /${command}` : 'The agent finished without a reply'
+}
+
+export function EmptyReply({ learnerText }: { learnerText: string | null | undefined }) {
+  return (
+    <p data-testid="empty-agent-reply" className="text-xs italic text-gray-500">
+      {emptyReplyText(learnerText)}
+    </p>
+  )
+}
+
 /**
  * A delivery recorded in the conversation: who sent what to which tool, and a
  * way back to it — after a restart this is the only one, so it carries the
@@ -84,7 +115,7 @@ export function PracticeDeliveredEntry({
 }: {
   nodeId: string
   text: string
-  delivery: { tool: DeliveredTool; itemIds: string[] } | null
+  delivery: { tool: DeliveredTool; messageId: string; itemIds: string[] } | null
 }) {
   return (
     <div
@@ -96,7 +127,7 @@ export function PracticeDeliveredEntry({
       {delivery ? (
         <button
           type="button"
-          onClick={() => revealPractice({ nodeId, tool: delivery.tool, itemIds: delivery.itemIds })}
+          onClick={() => revealDelivery({ nodeId, ...delivery })}
           className="ml-auto font-medium text-indigo-700 underline hover:text-indigo-900"
         >
           Open in {practiceToolLabel(delivery.tool)} →
@@ -143,6 +174,8 @@ const ROLE_CLASS = 'mb-1 text-[11px] font-semibold uppercase tracking-wide text-
  */
 export function LiveTurnEntries({ turn, nodeId }: { turn: LiveTurn; nodeId: string }) {
   const running = turn.phase === 'running'
+  const learner = turn.entries.find((entry) => entry.type === 'learner')
+  const learnerText = learner?.type === 'learner' ? learner.text : null
   return (
     <>
       {turn.entries.map((entry) => {
@@ -155,6 +188,14 @@ export function LiveTurnEntries({ turn, nodeId }: { turn: LiveTurn; nodeId: stri
               </li>
             )
           case 'agent':
+            if (!running && turn.outcome === 'completed' && !entry.text.trim()) {
+              return (
+                <li key={entry.key} className="flex flex-col" data-testid="live-agent-message">
+                  <span className={ROLE_CLASS}>Agent</span>
+                  <EmptyReply learnerText={learnerText} />
+                </li>
+              )
+            }
             return (
               <li key={entry.key} className="flex flex-col" data-testid="live-agent-message" aria-busy={running}>
                 <span className={ROLE_CLASS}>Agent</span>
@@ -195,13 +236,19 @@ export function LiveTurnEntries({ turn, nodeId }: { turn: LiveTurn; nodeId: stri
                 <ContinuitySeamNotice reason={entry.reason} />
               </li>
             )
+          case 'settings_notice':
+            return (
+              <li key={entry.key}>
+                <SettingsNotice text={entry.text} />
+              </li>
+            )
           case 'practice_delivered':
             return (
               <li key={entry.key}>
                 <PracticeDeliveredEntry
                   nodeId={nodeId}
                   text={deliveryText(entry)}
-                  delivery={{ tool: entry.tool, itemIds: entry.itemIds }}
+                  delivery={{ tool: entry.tool, messageId: entry.id, itemIds: entry.itemIds }}
                 />
               </li>
             )

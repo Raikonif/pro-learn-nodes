@@ -43,10 +43,13 @@ from models.workspace import (
     WorkspaceRecord,
 )
 from repository import agent_repo
+from service import practice_service, projects, workspace
 from service.workspace import note_message
 from service.context_server.credentials import Scope
 from service.context_server.orientation import ORIENTATION_NOTE
+from service.agent.controls import CONTROL_OF_CATEGORY, mode_group
 from service.agent.contract import (
+    ContextUsage,
     McpServer,
     Agent,
     AgentError,
@@ -135,6 +138,48 @@ _COMMAND_INSTRUCTION = {
 _TOOL_LABEL = {"qa": "Q&A", "quiz": "Quiz", "code": "Code"}
 
 
+def _origin_preamble(origin: Any) -> str:
+    """Tell a fresh session where its conversation came from, cut at the branch point."""
+
+    speaker = {"learner": "Learner"}
+    transcript = "\n\n".join(f"{speaker.get(m['role'], 'Assistant')}: {m['content']}" for m in origin.messages)
+    kind = "a side thread of" if origin.side_thread else "a branch of"
+    omitted = " (earlier messages were left out)" if origin.omitted else ""
+    text = (
+        f"This conversation is {kind} the learner's session \"{origin.parent_title}\". "
+        f"Here is that session up to the point it was branched from{omitted}:\n\n"
+        f"<parent-conversation>\n{transcript}\n</parent-conversation>"
+    )
+    if origin.passage:
+        text += f"\n\nThe learner branched from this passage: \u201c{origin.passage}\u201d"
+    else:
+        text += "\n\nThe learner started this as a follow-up to that session."
+    return text
+
+
+def _project_notice(told: dict[str, Any] | None, current: dict[str, Any], fresh: bool) -> str | None:
+    """What the agent must hear about its node's project this turn, if anything.
+
+    `told` is what this agent session was last given. A new session is told
+    the instructions once, labelled with the project; a continuing one is told
+    only when they changed — edited, renamed, or the node moved — and never
+    again after that. A project with nothing to say adds nothing to a new
+    session, and a session never told anything is not woken to hear "General
+    has no instructions".
+    """
+
+    name, instructions = current["name"], current["instructions"].strip()
+    if fresh:
+        return f'Project "{name}" instructions:\n{instructions}' if instructions else None
+    if told == current:
+        return None
+    if told is None and not instructions:
+        return None
+    if instructions:
+        return f'The project for this session is now "{name}". Its instructions:\n{instructions}'
+    return f'The project for this session is now "{name}". It has no instructions.'
+
+
 def _delivery_line(agent_name: str, tool: str, count: int) -> str:
     noun = "exercise" if tool == "code" else "question"
     amount = f"{'an' if noun == 'exercise' else 'a'} {noun}" if count == 1 else f"{count} {noun}s"
@@ -156,6 +201,8 @@ class _Continuation:
     missed: str | None = None
     # A session opened on this turn: its first prompt carries the orientation.
     fresh: bool = False
+    # What this conversation branched from, for a freshly opened session.
+    origin: str | None = None
 
 
 @dataclass
@@ -238,6 +285,8 @@ class TurnService:
             return
 
         session_id = continuation.session_id
+        for name, data in await self._apply_controls(agent, session_id, registration, workspace_id, thread_id, node_id):
+            yield name, data
         prompt = text
         if continuation.seam is not None:
             seam_id, transcript = continuation.seam
@@ -247,6 +296,16 @@ class TurnService:
             prompt = _catch_up_prompt(continuation.missed, text)
         if command in _COMMAND_INSTRUCTION:
             prompt = f"{_COMMAND_INSTRUCTION[command]}\n\nThe learner asked: {prompt}"
+        # Order: orientation, project, origin, then what this turn asks — so
+        # neither the origin nor the project is read as something the learner
+        # typed.
+        if continuation.origin:
+            prompt = f"{continuation.origin}\n\n{prompt}"
+        project_notice = self._project_notice(
+            workspace_id, node_id, continuation.row_id, continuation.fresh
+        )
+        if project_notice:
+            prompt = f"{project_notice}\n\n{prompt}"
         if continuation.fresh and self._context is not None and self._orientation:
             prompt = f"{ORIENTATION_NOTE}\n\n{prompt}"
 
@@ -307,6 +366,8 @@ class TurnService:
                     yield "plan", {
                         "entries": [{"content": e.content, "status": e.status} for e in event.entries]
                     }
+                elif isinstance(event, ContextUsage):
+                    yield "context.usage", {"used": event.used, "size": event.size}
                 elif isinstance(event, Usage):
                     yield "usage", {
                         "inputTokens": event.input_tokens,
@@ -332,6 +393,11 @@ class TurnService:
                     yield "turn.ended", {"outcome": event.outcome, "reason": event.reason}
                     return
         finally:
+            # Commands can be announced after the session's answer; keep the
+            # offer current for the composer's menu.
+            available = getattr(agent, "available_commands", None)
+            if available is not None:
+                registry_record_offer(registration.id, None, available(session_id))
             if inbox is not None:
                 bus.unsubscribe(node_id, thread_id, inbox)
             self._active.pop(turn_id, None)
@@ -414,6 +480,60 @@ class TurnService:
             session.flush()
             return record.id
 
+    async def _apply_controls(
+        self,
+        agent: Agent,
+        session_id: str,
+        registration: AgentRegistrationRecord,
+        workspace_id: str,
+        thread_id: str,
+        node_id: str,
+    ) -> list[TurnEvent]:
+        """Record what the agent offers, apply the session's choices, report the result.
+
+        Only choices that differ from the session's current values are sent.
+        The application never sets a value the learner did not choose; the
+        state reported is what the session actually runs with, so a permissive
+        mode set in the agent's own configuration is shown as such.
+        """
+
+        options_of = getattr(agent, "config_options", None)
+        if options_of is None:
+            return []
+        options = options_of(session_id)
+        if not options:
+            return []
+        registry_record_offer(registration.id, options, agent.available_commands(session_id))
+        with session_scope() as session:
+            chosen = dict(session.get(WorkspaceNodeRecord, node_id).agent_settings or {})
+        events: list[TurnEvent] = []
+        by_control = {CONTROL_OF_CATEGORY.get(o.category or ""): o for o in options}
+        for control, value in chosen.items():
+            option = by_control.get(control)
+            if option is None or value not in {v.value for v in option.values}:
+                line = f"{value} is no longer offered by {registration.name}; using its default {control}."
+                message_id = self._record_delivery(workspace_id, thread_id, None, line, {"control": control}, kind="settings_notice")
+                events.append(("settings.notice", {"messageId": message_id, "text": line}))
+                continue
+            if option.current != value:
+                try:
+                    options = await agent.set_config_option(session_id, option.id, value)
+                except AgentError as error:
+                    line = f"{registration.name} did not accept the {control} choice: {error}"
+                    message_id = self._record_delivery(workspace_id, thread_id, None, line, {"control": control}, kind="settings_notice")
+                    events.append(("settings.notice", {"messageId": message_id, "text": line}))
+                    break
+                by_control = {CONTROL_OF_CATEGORY.get(o.category or ""): o for o in options}
+        current = {control: (o.current if o else None) for control, o in by_control.items() if control}
+        state = {
+            "model": current.get("model"), "effort": current.get("effort"), "fast": current.get("fast"),
+            "mode": current.get("mode"), "modeGroup": mode_group(current.get("mode")),
+        }
+        with session_scope() as session:
+            session.get(WorkspaceNodeRecord, node_id).agent_state = state
+        events.append(("session.state", state))
+        return events
+
     def _record_delivery(
         self,
         workspace_id: str,
@@ -427,13 +547,21 @@ class TurnService:
             if message_id is not None:
                 record = session.get(ChatMessageRecord, message_id)
                 record.content, record.data = content, data
-                return record.id
-            record = ChatMessageRecord(
-                workspace_id=workspace_id, thread_id=thread_id, role="agent",
-                kind=kind, content=content, data=data,
-            )
-            session.add(record)
-            session.flush()
+            else:
+                record = ChatMessageRecord(
+                    workspace_id=workspace_id, thread_id=thread_id, role="agent",
+                    kind=kind, content=content, data=data,
+                )
+                session.add(record)
+                session.flush()
+            if kind == "practice_delivered":
+                # The items name their delivery in the same commit as the
+                # record that lists them, so practice can group them the way
+                # they arrived without reading the conversation.
+                thread = session.get(ChatThreadRecord, thread_id)
+                practice_service.stamp_delivery(
+                    session, workspace_id, thread.node_id, record.id, data.get("itemIds", [])
+                )
             return record.id
 
     def _record_tool(
@@ -563,8 +691,10 @@ class TurnService:
             row.synced_through = None
             session.flush()
             row_id = row.id
+        origin = workspace.conversation_origin(workspace_id, thread_id)
+        preamble = _origin_preamble(origin) if origin is not None else None
         if not history:
-            return _Continuation(session_id, row_id, fresh=True)
+            return _Continuation(session_id, row_id, fresh=True, origin=preamble)
         reason = (
             f"{registration.name} could not continue an earlier session of this conversation, "
             "so it was handed the conversation from this record."
@@ -575,8 +705,25 @@ class TurnService:
         with session_scope() as session:
             seam_id = self._record_in(session, thread_id, "continuity_seam", reason, seam_at)
         return _Continuation(
-            session_id, row_id, seam=(seam_id, render_transcript(history)), fresh=True
+            session_id, row_id, seam=(seam_id, render_transcript(history)), fresh=True, origin=preamble
         )
+
+    @staticmethod
+    def _project_notice(workspace_id: str, node_id: str, row_id: str, fresh: bool) -> str | None:
+        """The notice for this turn, recording what the session is now told.
+
+        Membership decides: the node's own project, never that of a node it
+        is linked from. Recorded as the prompt is assembled, so a turn that
+        goes on to run never repeats it.
+        """
+
+        current = projects.node_project(workspace_id, node_id)
+        with session_scope() as session:
+            row = session.get(AgentSessionRecord, row_id)
+            told = None if fresh else row.project_context
+            notice = _project_notice(told, current, fresh)
+            row.project_context = current
+        return notice
 
     def _servers(
         self,
@@ -620,3 +767,10 @@ class TurnService:
         session.add(record)
         session.flush()
         return record.id
+
+
+def registry_record_offer(agent_id: str, options: Any, commands: Any) -> None:
+    # Imported on use: the registry imports this module's neighbours, not this one.
+    from service.agent.registry import record_offer
+
+    record_offer(agent_id, options, commands)

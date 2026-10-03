@@ -331,7 +331,7 @@ describe('workspace store — discarding hydrated state', () => {
     useWorkspaceStore.getState().discardHydratedState()
 
     const state = useWorkspaceStore.getState()
-    expect(state.graph).toEqual({ nodes: [], links: [], threads: [], messages: [] })
+    expect(state.graph).toEqual({ nodes: [], links: [], threads: [], messages: [], projects: [], archivedLinks: [] })
     expect(state.workspaceId).toBeNull()
     expect(state.revision).toBeNull()
     expect(state.status).toBe('loading')
@@ -470,6 +470,78 @@ describe('workspace store — conversation backend', () => {
 
     const node = useWorkspaceStore.getState().graph.nodes.find((n) => n.id === nodeId)!
     expect(node.backendAgentId).toBe('agent-1')
+  })
+})
+
+describe('workspace store — agent settings (agent-session-controls 4.1)', () => {
+  beforeEach(() => {
+    __resetIdCounter()
+    useWorkspaceStore.getState().reset()
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  function haskell() {
+    return useWorkspaceStore.getState().graph.nodes.find((n) => n.id === 'n-haskell')!
+  }
+
+  it('records choices on the node, a null returning that control to the agent default', async () => {
+    await useWorkspaceStore.getState().setNodeAgentSettings('n-haskell', { model: 'opus', effort: 'high' })
+    await useWorkspaceStore.getState().setNodeAgentSettings('n-haskell', { model: null })
+
+    expect(haskell().agentSettings).toEqual({ effort: 'high' })
+  })
+
+  it('does not send the confirmation as a choice', async () => {
+    await useWorkspaceStore.getState().setNodeAgentSettings('n-haskell', { mode: 'auto', confirmedUnasked: true })
+
+    expect(haskell().agentSettings).toEqual({ mode: 'auto' })
+  })
+
+  it('clears the choices when the node moves to another agent, and passes them to children', async () => {
+    await useWorkspaceStore.getState().setNodeAgentSettings('n-haskell', { model: 'opus' })
+
+    const childId = useWorkspaceStore.getState().createChildNodeFrom('n-haskell') as string
+    const child = useWorkspaceStore.getState().graph.nodes.find((n) => n.id === childId)!
+    expect(child.agentSettings).toEqual({ model: 'opus' })
+
+    useWorkspaceStore.getState().setNodeBackend('n-haskell', 'agent-2')
+    expect(haskell().agentSettings ?? null).toBeNull()
+  })
+
+  it('puts the choice to the backend and applies the snapshot it answers with', async () => {
+    const snapshot = {
+      ...BOB_SNAPSHOT,
+      revision: 9,
+      graph: {
+        ...BOB_SNAPSHOT.graph,
+        nodes: [{ ...node('bob-node-1', 'Bob: Ownership'), agentSettings: { model: 'opus' } }],
+      },
+    }
+    await hydrateFrom(BOB_SNAPSHOT)
+    const fetchMock = vi.fn(() => Promise.resolve(response(snapshot)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await useWorkspaceStore.getState().setNodeAgentSettings('bob-node-1', { model: 'opus' })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/workspace/nodes/bob-node-1/agent-settings',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ model: 'opus' }) }),
+    )
+    const bob = useWorkspaceStore.getState().graph.nodes.find((n) => n.id === 'bob-node-1')!
+    expect(bob.agentSettings).toEqual({ model: 'opus' })
+  })
+
+  it('surfaces a refusal from the backend', async () => {
+    await hydrateFrom(BOB_SNAPSHOT)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: 'confirm first' }), { status: 422 }))),
+    )
+
+    await expect(
+      useWorkspaceStore.getState().setNodeAgentSettings('bob-node-1', { mode: 'bypassPermissions' }),
+    ).rejects.toThrow()
   })
 })
 

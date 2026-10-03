@@ -203,3 +203,29 @@ async def test_a_command_is_accepted_and_its_result_is_in_bootstrap(tmp_path):
     assert messages[0]["content"] == "/quiz folds" and messages[0]["data"] is None
     notice = next(m for m in messages if m["kind"] == "practice_not_delivered")
     assert notice["data"] == {"tool": "quiz"}
+
+
+async def test_offer_and_agent_settings_routes(tmp_path):
+    from service.agent.contract import AvailableCommand
+    from tests.agent_doubles import offered_options
+
+    store = InMemorySecretStore()
+    agent = FakeAgent(offered=offered_options(), commands=[AvailableCommand("compact", "Free context")])
+    async with client_for(tmp_path, store, agent) as client:
+        ProfileService(store).enroll(ADA)
+        registered = (await client.post("/agents", json={"name": "Codex", "command": "x"})).json()
+        offer = (await client.get(f"/agents/{registered['id']}/offer")).json()
+        node = (await client.post("/workspace/nodes", json={"title": "N"})).json()["graph"]["nodes"][-1]["id"]
+        bad = await client.put(f"/workspace/nodes/{node}/agent-settings", json={"model": "nope"})
+        unconfirmed = await client.put(f"/workspace/nodes/{node}/agent-settings", json={"mode": "bypassPermissions"})
+        confirmed = await client.put(f"/workspace/nodes/{node}/agent-settings", json={"mode": "bypassPermissions", "confirmedUnasked": True})
+        cleared = await client.put(f"/workspace/nodes/{node}/agent-settings", json={"mode": None, "model": "smart-2"})
+        unknown_key = await client.put(f"/workspace/nodes/{node}/agent-settings", json={"collaboration": "plan"})
+
+    assert offer["known"] is True and offer["commands"][0]["name"] == "compact", "recorded at registration"
+    assert bad.status_code == 422 and "not offered" in bad.json()["detail"]
+    assert unconfirmed.status_code == 422 and "without asking" in unconfirmed.json()["detail"]
+    settings = lambda r: r.json()["graph"]["nodes"][-1]["agentSettings"]  # noqa: E731
+    assert confirmed.status_code == 200 and settings(confirmed) == {"mode": "bypassPermissions"}
+    assert settings(cleared) == {"model": "smart-2"}
+    assert unknown_key.status_code == 422

@@ -80,6 +80,7 @@ async def test_a_node_reads_items_attempts_and_sandbox_together(tmp_path):
     assert again.status_code == 200 and again.json()["id"] != first["id"]
     assert (chosen["chosenOption"], chosen["correct"]) == (1, False)
     assert [i["id"] for i in material["items"]] == [free["id"], mc["id"]]
+    assert [i["deliveryId"] for i in (free, *material["items"])] == [None, None, None], "the learner's items arrived with no delivery"
     assert [a["response"] for a in material["attempts"]][1:] == ["It reduces a structure", "It reduces"]
     assert material["attempts"][2] == first, "the first attempt is unchanged"
     assert put_again.status_code == 200 and material["sandbox"]["code"] == "print(1)"

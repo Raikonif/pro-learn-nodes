@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { useWorkspaceStore } from '../../shared/lib/workspace-store'
 import type { ChatMessage, TurnOutcome } from '../../shared/lib/workspace-types'
 
-import { revealPractice } from '../practice'
+import { revealDelivery } from '../practice'
 
 import {
   cancelTurn,
@@ -15,6 +15,7 @@ import {
   type TurnUsage,
 } from './chat-api'
 import { deliveryText } from './delivery'
+import { nodeOfThread, useSessionStore } from './session-store'
 
 /**
  * One visible piece of a turn in progress. Entries carrying an `id` are
@@ -37,6 +38,7 @@ export type LiveEntry =
   | { type: 'plan'; key: string; entries: PlanEntry[] }
   | { type: 'permission_refused'; key: string; id: string; title: string }
   | { type: 'continuity_seam'; key: string; id: string; reason: string }
+  | { type: 'settings_notice'; key: string; id: string; text: string }
   | ({ type: 'practice_delivered'; key: string; id: string } & Omit<PracticeDelivery, 'messageId'>)
 
 /**
@@ -144,6 +146,17 @@ function apply(turn: LiveTurn, event: TurnEvent): LiveTurn {
           { type: 'continuity_seam', key: event.messageId, id: event.messageId, reason: event.reason },
         ],
       }
+    case 'settings.notice':
+      if (turn.entries.some((entry) => entry.type === 'settings_notice' && entry.id === event.messageId)) {
+        return turn
+      }
+      return {
+        ...turn,
+        entries: [
+          ...turn.entries,
+          { type: 'settings_notice', key: event.messageId, id: event.messageId, text: event.text },
+        ],
+      }
     case 'practice.delivered': {
       // One record per tool per turn: a later event for the same message
       // carries the cumulative item ids and replaces the earlier line.
@@ -165,6 +178,10 @@ function apply(turn: LiveTurn, event: TurnEvent): LiveTurn {
       const { type: _type, ...usage } = event
       return { ...turn, usage }
     }
+    // Reported about the session, not the turn: kept per node by `send`.
+    case 'session.state':
+    case 'context.usage':
+      return turn
     case 'turn.ended':
       return {
         ...turn,
@@ -200,6 +217,10 @@ function recordedMessages(turn: LiveTurn): ChatMessage[] {
         return [
           { ...base, id: entry.id, role: 'agent', content: entry.reason, kind: 'continuity_seam', outcome: null },
         ]
+      case 'settings_notice':
+        return [
+          { ...base, id: entry.id, role: 'agent', content: entry.text, kind: 'settings_notice', outcome: null },
+        ]
       case 'practice_delivered':
         return [
           {
@@ -227,7 +248,22 @@ function revealIfOnScreen(threadId: string, delivery: PracticeDelivery): void {
   const workspace = useWorkspaceStore.getState()
   const nodeId = workspace.graph.threads.find((thread) => thread.id === threadId)?.nodeId
   if (nodeId === undefined || nodeId !== workspace.openNodeId) return
-  revealPractice({ nodeId, tool: delivery.tool, itemIds: delivery.itemIds })
+  revealDelivery({ nodeId, tool: delivery.tool, messageId: delivery.messageId, itemIds: delivery.itemIds })
+}
+
+/** Keeps what the turn reported about its session, against the session's node. */
+function recordSessionReport(
+  threadId: string,
+  event: Extract<TurnEvent, { type: 'session.state' | 'context.usage' }>,
+): void {
+  const nodeId = nodeOfThread(threadId)
+  if (nodeId === undefined) return
+  if (event.type === 'session.state') {
+    const { type: _type, ...state } = event
+    useSessionStore.getState().record(nodeId, { state })
+  } else {
+    useSessionStore.getState().record(nodeId, { usage: { used: event.used, size: event.size } })
+  }
 }
 
 function hasId(entry: LiveEntry): boolean {
@@ -285,6 +321,9 @@ export const useTurnStore = create<TurnState>((set, get) => {
           update(threadId, runId, (turn) => apply(turn, event))
           if (event.type === 'practice.delivered' && get().turns[threadId]?.runId === runId) {
             revealIfOnScreen(threadId, event)
+          }
+          if (event.type === 'session.state' || event.type === 'context.usage') {
+            recordSessionReport(threadId, event)
           }
         }
       } catch (error) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { PracticeAttempt, PracticeItem, PracticeOption } from '../practice-api'
 import { usePracticeStore } from '../practice-store'
@@ -16,16 +16,22 @@ import {
   fieldClass,
   useIsHighlighted,
 } from './ToolStates'
+import type { BlockBodyProps } from './block-body'
 
 /**
  * Multiple-choice questions on the open node. Correctness is whatever the
  * backend computed for the attempt; this tool only shows it back, with the
  * designated correct option.
  */
-function QuizTool({ nodeId }: { nodeId: string }) {
+function QuizTool({ nodeId, itemIds, canAuthor = true, startAuthoring = false }: BlockBodyProps) {
   const material = usePracticeStore((s) => s.material[nodeId])
   const load = usePracticeStore((s) => s.load)
-  const [authoring, setAuthoring] = useState(false)
+  const [authoring, setAuthoring] = useState(startAuthoring)
+
+  // Asked again while already mounted (the block was expanded): open the form.
+  useEffect(() => {
+    if (startAuthoring) setAuthoring(true)
+  }, [startAuthoring])
 
   if (!material || material.status === 'loading') {
     return <ToolLoading>Loading this node's quiz…</ToolLoading>
@@ -40,12 +46,14 @@ function QuizTool({ nodeId }: { nodeId: string }) {
     )
   }
 
-  const items = material.items.filter((item) => item.kind === 'multiple_choice')
+  const items = material.items.filter(
+    (item) => item.kind === 'multiple_choice' && (itemIds === undefined || itemIds.includes(item.id)),
+  )
 
   return (
     <div className="flex flex-col gap-3">
       {items.length === 0 && !authoring && (
-        <p className="text-xs text-gray-600">This node has no quiz questions yet.</p>
+        <p className="text-xs text-gray-600">No quiz questions yet.</p>
       )}
 
       {items.map((item) => (
@@ -57,13 +65,14 @@ function QuizTool({ nodeId }: { nodeId: string }) {
         />
       ))}
 
-      {authoring ? (
-        <ChoiceForm nodeId={nodeId} onDone={() => setAuthoring(false)} />
-      ) : (
-        <button type="button" onClick={() => setAuthoring(true)} className={`self-start ${buttonSecondary}`}>
-          Write a quiz question
-        </button>
-      )}
+      {canAuthor &&
+        (authoring ? (
+          <ChoiceForm nodeId={nodeId} onDone={() => setAuthoring(false)} />
+        ) : (
+          <button type="button" onClick={() => setAuthoring(true)} className={`self-start ${buttonSecondary}`}>
+            Write a quiz question
+          </button>
+        ))}
     </div>
   )
 }

@@ -108,7 +108,7 @@ function signedIn(profile: Profile = LEARNER): void {
  */
 function unhydrated(): void {
   useWorkspaceStore.setState({
-    graph: { nodes: [], links: [], threads: [], messages: [] },
+    graph: { nodes: [], links: [], threads: [], messages: [], projects: [], archivedLinks: [] },
     workspaceId: null,
     revision: null,
     viewport: {},
@@ -251,7 +251,7 @@ describe('App account affordance', () => {
     await waitFor(() => expect(screen.getByTestId('sign-in-surface')).toBeInTheDocument())
     // A signed-out window holds none of the account it just left.
     const state = useWorkspaceStore.getState()
-    expect(state.graph).toEqual({ nodes: [], links: [], threads: [], messages: [] })
+    expect(state.graph).toEqual({ nodes: [], links: [], threads: [], messages: [], projects: [], archivedLinks: [] })
     expect(state.workspaceId).toBeNull()
   })
 

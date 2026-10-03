@@ -150,3 +150,170 @@ describe('GraphCanvas', () => {
     expect(screen.queryByRole('button', { name: /create child node/i })).not.toBeInTheDocument()
   })
 })
+
+// ── Projects ─────────────────────────────────────────────────────────────
+
+const store = () => useWorkspaceStore.getState()
+
+/** Algebra holds Haskell and Functors; everything else stays in General. */
+async function splitIntoProjects(): Promise<string> {
+  let id = ''
+  await act(async () => {
+    id = await store().createProject('Algebra')
+    await store().moveNodeToProject('n-haskell', id)
+    await store().moveNodeToProject('n-functors', id)
+  })
+  return id
+}
+
+describe('project regions', () => {
+  it('draws no region while every card belongs to the default project', () => {
+    const derived = workspaceGraphToReactFlow(store().graph)
+
+    expect(derived.regions).toEqual([])
+  })
+
+  it('draws one labelled region per project, around exactly its laid-out cards', async () => {
+    const id = await splitIntoProjects()
+    const derived = workspaceGraphToReactFlow(store().graph)
+
+    expect(derived.regions.map((region) => region.data.name)).toEqual(['General', 'Algebra'])
+    const algebra = derived.regions.find((region) => region.data.projectId === id)!
+    for (const card of derived.nodes.filter((n) => n.data.node.projectId === id)) {
+      expect(card.position.x).toBeGreaterThanOrEqual(algebra.position.x)
+      expect(card.position.y).toBeGreaterThanOrEqual(algebra.position.y)
+      expect(card.position.x + 224).toBeLessThanOrEqual(algebra.position.x + (algebra.width ?? 0))
+      expect(card.position.y + 112).toBeLessThanOrEqual(algebra.position.y + (algebra.height ?? 0))
+    }
+  })
+
+  it('puts regions behind the cards and out of reach', async () => {
+    await splitIntoProjects()
+    const { regions } = workspaceGraphToReactFlow(store().graph)
+
+    for (const region of regions) {
+      expect(region.zIndex).toBeLessThan(0)
+      expect(region.selectable).toBe(false)
+      expect(region.draggable).toBe(false)
+      expect(region.focusable).toBe(false)
+      expect(region.style).toMatchObject({ pointerEvents: 'none' })
+    }
+  })
+
+  it('leaves every card and every link as without projects, so a link crosses regions untouched', async () => {
+    const before = workspaceGraphToReactFlow(store().graph)
+    await splitIntoProjects()
+    const after = workspaceGraphToReactFlow(store().graph)
+
+    expect(after.nodes.map((n) => [n.id, n.position])).toEqual(before.nodes.map((n) => [n.id, n.position]))
+    expect(after.edges.map((e) => [e.id, e.source, e.target])).toEqual(
+      before.edges.map((e) => [e.id, e.source, e.target]),
+    )
+    // Haskell (Algebra) -> Lazy Evaluation (General): a crossing link, drawn.
+    expect(after.edges.map((e) => [e.source, e.target])).toContainEqual(['n-haskell', 'n-lazy-evaluation'])
+  })
+
+  it('omits a project with no rendered cards, e.g. one whose sessions are archived', async () => {
+    const id = await splitIntoProjects()
+    await act(async () => store().archiveProject(id))
+
+    expect(workspaceGraphToReactFlow(store().graph).regions).toEqual([])
+  })
+
+  it('draws none in the minimap', async () => {
+    await splitIntoProjects()
+
+    expect(workspaceGraphToReactFlow(store().graph, { variant: 'minimap' }).regions).toEqual([])
+  })
+
+  it('renders the label behind the cards without making it a session or a control', async () => {
+    await splitIntoProjects()
+    render(<GraphCanvas />)
+
+    const labels = screen.getAllByTestId('project-region-label').map((label) => label.textContent)
+    expect(labels).toEqual(['General', 'Algebra'])
+    expect(screen.getAllByTestId('graph-node-card')).toHaveLength(FIXTURE_GRAPH.nodes.length)
+    expect(screen.queryByRole('button', { name: 'Algebra' })).not.toBeInTheDocument()
+
+    // A click that lands on a region opens nothing.
+    fireEvent.click(screen.getAllByTestId('project-region')[0])
+    expect(store().openNodeId).toBeNull()
+  })
+})
+
+describe('links to archived sessions', () => {
+  async function archiveFunctors(): Promise<void> {
+    await act(async () => store().archiveNode('n-functors'))
+  }
+
+  it('derives the entries onto the card of the end that is still there', async () => {
+    await archiveFunctors()
+    const derived = workspaceGraphToReactFlow(store().graph)
+
+    expect(derived.nodes.find((n) => n.id === 'n-haskell')!.data.archivedLinks).toEqual([
+      { nodeId: 'n-haskell', archivedNodeId: 'n-functors', archivedTitle: 'Functors' },
+    ])
+    expect(derived.nodes.find((n) => n.id === 'n-fp')!.data.archivedLinks).toEqual([])
+  })
+
+  it('says "linked to N archived" on that card only', async () => {
+    await archiveFunctors()
+    render(<GraphCanvas />)
+
+    const toggles = screen.getAllByTestId('archived-links-toggle')
+    // Haskell and Category Theory were Functors' parents.
+    expect(toggles.map((t) => t.textContent)).toEqual(['linked to 1 archived', 'linked to 1 archived'])
+    expect(within(screen.getByRole('button', { name: 'Haskell' })).getByTestId('archived-links-toggle')).toBeInTheDocument()
+    expect(within(screen.getByRole('button', { name: 'Lazy Evaluation' })).queryByTestId('archived-links-toggle')).toBeNull()
+  })
+
+  it('lists the archived sessions on activation without opening the card', async () => {
+    await archiveFunctors()
+    render(<GraphCanvas />)
+    const card = screen.getByRole('button', { name: 'Haskell' })
+
+    fireEvent.click(within(card).getByTestId('archived-links-toggle'))
+
+    const list = within(card).getByRole('list', { name: 'Archived links' })
+    expect(within(list).getByText('Functors')).toBeInTheDocument()
+    expect(store().openNodeId).toBeNull()
+  })
+
+  it('restores through the existing action and draws the link again', async () => {
+    await archiveFunctors()
+    render(<GraphCanvas />)
+    const card = screen.getByRole('button', { name: 'Haskell' })
+    fireEvent.click(within(card).getByTestId('archived-links-toggle'))
+
+    await act(async () => {
+      fireEvent.click(within(card).getByRole('button', { name: 'Restore Functors' }))
+    })
+
+    expect(store().graph.nodes.some((n) => n.id === 'n-functors')).toBe(true)
+    expect(store().graph.links.some((l) => l.parentId === 'n-haskell' && l.childId === 'n-functors')).toBe(true)
+    expect(screen.queryByTestId('archived-links-toggle')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Functors' })).toBeInTheDocument()
+  })
+
+  it('shows the backend\'s refusal when the archived session\'s project is archived', async () => {
+    const id = await splitIntoProjects()
+    await act(async () => store().archiveProject(id))
+    // Functors is now archived with Algebra; Category Theory still links to it.
+    render(<GraphCanvas />)
+    const card = screen.getByRole('button', { name: 'Category Theory' })
+    fireEvent.click(within(card).getByTestId('archived-links-toggle'))
+
+    await act(async () => {
+      fireEvent.click(within(card).getByRole('button', { name: 'Restore Functors' }))
+    })
+
+    expect(within(card).getByRole('alert')).toHaveTextContent('Restore the project Algebra first')
+  })
+
+  it('shows nothing in the minimap', async () => {
+    await archiveFunctors()
+    render(<GraphCanvas variant="minimap" />)
+
+    expect(screen.queryByTestId('archived-links-toggle')).not.toBeInTheDocument()
+  })
+})

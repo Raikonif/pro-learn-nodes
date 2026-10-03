@@ -1,13 +1,22 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import { graphlib, layout } from '@dagrejs/dagre'
 
-import type { NodeLink, WorkspaceGraph, WorkspaceNode } from '../../../shared/lib/workspace-types'
+import type {
+  ArchivedLink,
+  NodeLink,
+  Project,
+  WorkspaceGraph,
+  WorkspaceNode,
+} from '../../../shared/lib/workspace-types'
 
 /** The card dimensions are fixed so the initial layout remains deterministic. */
 export const GRAPH_NODE_WIDTH = 224
 export const GRAPH_NODE_HEIGHT = 112
 export const GRAPH_NODE_SEPARATION = 64
 export const GRAPH_RANK_SEPARATION = 88
+/** How far a project's region extends past the cards it surrounds; the top leaves room for its label. */
+export const REGION_PADDING = 24
+export const REGION_LABEL_HEIGHT = 20
 
 export type GraphCanvasVariant = 'canvas' | 'minimap'
 
@@ -19,9 +28,19 @@ export type GraphNodeData = {
   mode: WorkspaceNode['mode']
   isCurrent: boolean
   variant: GraphCanvasVariant
+  /** Links from this node to sessions that are archived, for the card to say so and offer to restore. */
+  archivedLinks: ArchivedLink[]
 }
 
 export type GraphFlowNode = Node<GraphNodeData, 'chatCard'>
+
+export type GraphRegionData = {
+  projectId: string
+  name: string
+}
+
+/** The rounded rectangle drawn behind one project's cards. Not a session, not interactive. */
+export type GraphRegionNode = Node<GraphRegionData, 'projectRegion'>
 
 export type GraphEdgeData = {
   /** Keep the complete domain link available to derived graph consumers. */
@@ -47,6 +66,8 @@ export type GraphLayout = {
 
 export type ReactFlowGraph = {
   nodes: GraphFlowNode[]
+  /** Behind the cards; kept apart from `nodes` so a consumer of cards never meets one. */
+  regions: GraphRegionNode[]
   edges: GraphFlowEdge[]
   layout: GraphLayout
 }
@@ -112,6 +133,65 @@ export function layoutGraph(graph: WorkspaceGraph): GraphLayout {
   }
 }
 
+/**
+ * One region per project that has rendered cards, from those cards' laid-out
+ * bounds.
+ *
+ * Membership alone decides a card's region — the layout knows nothing about
+ * projects, so regions can overlap where projects interleave in the tree, and a
+ * link crossing two regions is drawn like any other. A graph whose cards all
+ * belong to the default project gets none: one rectangle around everything
+ * groups nothing, and a fresh account should see a plain graph.
+ */
+export function projectRegions(layout: GraphLayout, projects: readonly Project[]): GraphRegionNode[] {
+  const known = new Map(projects.map((project) => [project.id, project]))
+  const bounds = new Map<string, { left: number; top: number; right: number; bottom: number }>()
+  for (const positioned of layout.nodes) {
+    const projectId = positioned.node.projectId
+    if (!projectId || !known.has(projectId)) continue
+    const box = bounds.get(projectId)
+    const right = positioned.x + positioned.width
+    const bottom = positioned.y + positioned.height
+    bounds.set(projectId, {
+      left: Math.min(box?.left ?? positioned.x, positioned.x),
+      top: Math.min(box?.top ?? positioned.y, positioned.y),
+      right: Math.max(box?.right ?? right, right),
+      bottom: Math.max(box?.bottom ?? bottom, bottom),
+    })
+  }
+  if (bounds.size === 0) return []
+  if (bounds.size === 1 && known.get([...bounds.keys()][0])?.isDefault) return []
+
+  // Project order, not layout order, so repeated layouts derive identical regions.
+  return projects.flatMap((project) => {
+    const box = bounds.get(project.id)
+    if (!box) return []
+    const width = box.right - box.left + REGION_PADDING * 2
+    const height = box.bottom - box.top + REGION_PADDING * 2 + REGION_LABEL_HEIGHT
+    return [
+      {
+        id: `region:${project.id}`,
+        type: 'projectRegion' as const,
+        position: { x: box.left - REGION_PADDING, y: box.top - REGION_PADDING - REGION_LABEL_HEIGHT },
+        width,
+        height,
+        initialWidth: width,
+        initialHeight: height,
+        // Below every card, and unreachable: a region is a label, and a click
+        // that lands on one must fall through to what is under it.
+        zIndex: -1,
+        data: { projectId: project.id, name: project.name },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        connectable: false,
+        deletable: false,
+        style: { pointerEvents: 'none' as const },
+      },
+    ]
+  })
+}
+
 export type ReactFlowGraphOptions = {
   openNodeId?: string | null
   variant?: GraphCanvasVariant
@@ -152,6 +232,7 @@ export function workspaceGraphToReactFlow(
           mode: node.mode,
           isCurrent: variant === 'minimap' && node.id === openNodeId,
           variant,
+          archivedLinks: graph.archivedLinks.filter((link) => link.nodeId === node.id),
         },
         draggable: false,
         selectable: false,
@@ -175,7 +256,10 @@ export function workspaceGraphToReactFlow(
     ]
   })
 
-  return { nodes, edges, layout }
+  // The minimap is a position marker, too small to carry a label.
+  const regions = variant === 'canvas' ? projectRegions(layout, graph.projects) : []
+
+  return { nodes, regions, edges, layout }
 }
 
 // A descriptive alias keeps call sites readable while preserving the short

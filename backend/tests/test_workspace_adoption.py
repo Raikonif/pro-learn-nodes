@@ -35,7 +35,10 @@ ADOPTED_SUBJECT = "adopted-workspace"
 # where a child's reference silently starts pointing at nothing.
 WORKSPACE_CHILD_FOREIGN_KEYS = {
     "workspace_contexts": {("workspaces", "workspace_id", "id")},
-    "workspace_nodes": {("workspaces", "workspace_id", "id")},
+    "workspace_nodes": {
+        ("workspaces", "workspace_id", "id"),
+        ("projects", "project_id", "id"),
+    },
     "selection_anchors": {
         ("workspaces", "workspace_id", "id"),
         ("chat_messages", "source_message_id", "id"),

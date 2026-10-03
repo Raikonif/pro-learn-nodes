@@ -54,6 +54,8 @@ export type ChatRole = z.infer<typeof ChatRoleSchema>
  *     `{ tool, itemIds }` so the record can lead back to it after a restart)
  *   - `practice_not_delivered`: a `/code`, `/qa` or `/quiz` turn ended with
  *     nothing delivered (`data`: `{ tool }`)
+ *   - `settings_notice`: a session choice the agent no longer offers was not
+ *     sent (`content` says which, and why)
  *
  * Defaulted so a snapshot from before agent backends still parses.
  */
@@ -64,6 +66,7 @@ export const MessageKindSchema = z.enum([
   'continuity_seam',
   'practice_delivered',
   'practice_not_delivered',
+  'settings_notice',
 ])
 export type MessageKind = z.infer<typeof MessageKindSchema>
 
@@ -124,6 +127,62 @@ export const TitleSourceSchema = z.enum(['provisional', 'auto', 'topic', 'learne
 export type TitleSource = z.infer<typeof TitleSourceSchema>
 
 /**
+ * How much a permission mode lets an agent do unasked (agent-session-controls
+ * design.md "Permission modes are classified…"). Learn Nodes refuses every
+ * permission request, so `asks` is effectively read-only; `edits` writes in
+ * the session's folder; `unasked` acts on the learner's system.
+ */
+export const MODE_GROUPS = ['asks', 'edits', 'unasked'] as const
+export type ModeGroup = (typeof MODE_GROUPS)[number]
+
+/** Reads a group, putting anything unrecognised in the most permissive one. */
+export function toModeGroup(value: unknown): ModeGroup {
+  return (MODE_GROUPS as readonly unknown[]).includes(value) ? (value as ModeGroup) : 'unasked'
+}
+
+const choice = z.string().nullish()
+
+/**
+ * The learner's choices for a session's agent, values only. A control left out
+ * runs on the agent's default; `null` on the wire means the same and is dropped.
+ */
+export const AgentSettingsSchema = z
+  .object({ model: choice, effort: choice, fast: choice, mode: choice })
+  .transform((settings) => {
+    const kept: { model?: string; effort?: string; fast?: string; mode?: string } = {}
+    for (const key of ['model', 'effort', 'fast', 'mode'] as const) {
+      const value = settings[key]
+      if (typeof value === 'string') kept[key] = value
+    }
+    return kept
+  })
+
+export type AgentSettings = z.infer<typeof AgentSettingsSchema>
+export type AgentSettingKey = keyof AgentSettings
+
+const reported = z.string().nullish().transform((v) => v ?? null)
+
+/**
+ * What the session actually ran with on its last turn. A mode with no group,
+ * or an unrecognised group, reads as acting without asking.
+ */
+export const AgentStateSchema = z
+  .object({
+    model: reported,
+    effort: reported,
+    fast: reported,
+    mode: reported,
+    modeGroup: z.unknown(),
+  })
+  .transform(({ modeGroup, ...state }) => ({
+    ...state,
+    modeGroup:
+      modeGroup == null && state.mode === null ? null : toModeGroup(modeGroup),
+  }))
+
+export type AgentState = z.infer<typeof AgentStateSchema>
+
+/**
  * A session. Configuration (mode, skills, MCP) lives here and only here —
  * threads inherit it and cannot override it (design.md Decision 6).
  */
@@ -155,6 +214,21 @@ export const WorkspaceNodeSchema = z
      * automatic titling was created with an explicit title.
      */
     titleSource: TitleSourceSchema.default('topic'),
+    /**
+     * The learner's choices for this session's agent (agent-session-controls),
+     * and what its last turn actually ran with. Optional — and lenient — so a
+     * snapshot from before session controls, or a malformed entry, still
+     * parses; either one absent reads as `null`.
+     */
+    agentSettings: AgentSettingsSchema.nullish().catch(null),
+    agentState: AgentStateSchema.nullish().catch(null),
+    /**
+     * The one project this session belongs to (node-projects-and-archive).
+     * Defaulted to `null` so a snapshot from a backend that predates projects
+     * still parses; `null` then reads as "no project is known", and nothing
+     * in the interface groups or labels the node.
+     */
+    projectId: z.string().min(1).nullable().default(null),
   })
   .transform((node) => ({ ...node, lastActivityAt: node.lastActivityAt ?? node.lastOpenedAt }))
 
@@ -179,12 +253,46 @@ export const NodeLinkSchema = z.object({
 
 export type NodeLink = z.infer<typeof NodeLinkSchema>
 
-/** Everything the workspace renders, in one validated envelope. */
+/**
+ * A named group of sessions. Membership is one project per node; a link may
+ * join nodes of different projects, so a project is a label and a source of
+ * instructions, never a container the graph has to respect.
+ */
+export const ProjectSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  instructions: z.string().default(''),
+  /** Where sessions with no chosen project go. It cannot be archived or deleted. */
+  isDefault: z.boolean().default(false),
+  createdAt: z.string().datetime({ offset: true }),
+})
+
+export type Project = z.infer<typeof ProjectSchema>
+
+/**
+ * A link whose other end is archived: the unarchived end (`nodeId`) is told
+ * that such a link exists, and who is on the other side, so the canvas can say
+ * so and offer to bring that session back instead of dropping the link silently.
+ */
+export const ArchivedLinkSchema = z.object({
+  nodeId: z.string().min(1),
+  archivedNodeId: z.string().min(1),
+  archivedTitle: z.string(),
+})
+
+export type ArchivedLink = z.infer<typeof ArchivedLinkSchema>
+
+/**
+ * Everything the workspace renders, in one validated envelope. `projects` and
+ * `archivedLinks` default to empty so a snapshot from before projects parses.
+ */
 export const WorkspaceGraphSchema = z.object({
   nodes: z.array(WorkspaceNodeSchema),
   links: z.array(NodeLinkSchema),
   threads: z.array(ChatThreadSchema),
   messages: z.array(ChatMessageSchema),
+  projects: z.array(ProjectSchema).default([]),
+  archivedLinks: z.array(ArchivedLinkSchema).default([]),
 })
 
 export type WorkspaceGraph = z.infer<typeof WorkspaceGraphSchema>

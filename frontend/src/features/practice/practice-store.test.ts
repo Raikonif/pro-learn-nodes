@@ -70,6 +70,9 @@ function requests(fetchMock: ReturnType<typeof stubBackend>, method: string) {
 
 beforeEach(() => {
   usePracticeStore.getState().discard()
+  // `discard` keeps the arrangement by design; each test starts without one.
+  usePracticeStore.setState({ arrangements: {} })
+  localStorage.clear()
 })
 
 afterEach(() => {
@@ -176,21 +179,54 @@ describe('practice store — material by node', () => {
   })
 })
 
-describe('practice store — selected tool', () => {
-  it('selects the questions tool by default and remembers a selection', () => {
-    expect(usePracticeStore.getState().selectedTool).toBe('questions')
+describe('practice store — workbench arrangement', () => {
+  it('expands one block, collapses all, and closes without touching material', () => {
+    const fetchMock = stubBackend({})
+    const store = usePracticeStore.getState()
 
-    usePracticeStore.getState().selectTool('sandbox')
+    store.expandBlock('a', 'delivery:d1')
+    expect(usePracticeStore.getState().arrangements.a?.expanded).toBe('delivery:d1')
 
-    expect(usePracticeStore.getState().selectedTool).toBe('sandbox')
+    store.closeBlock('a', 'delivery:d1')
+    expect(usePracticeStore.getState().arrangements.a).toMatchObject({ expanded: null, closed: ['delivery:d1'] })
+
+    store.expandBlock('a', null)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('selecting a tool sends nothing to the backend', () => {
+  it('opening a block reopens it, lists it while empty, and can ask for its form', () => {
+    const store = usePracticeStore.getState()
+    store.closeBlock('a', 'mine:quiz')
+
+    store.openBlock('a', 'mine:quiz', { author: true })
+
+    const state = usePracticeStore.getState()
+    expect(state.arrangements.a?.closed).toEqual([])
+    expect(state.arrangements.a?.expanded).toBe('mine:quiz')
+    expect(Object.keys(state.arrangements.a?.opened ?? {})).toEqual(['mine:quiz'])
+    expect(state.authoring).toMatchObject({ nodeId: 'a', block: 'mine:quiz' })
+    state.consumeAuthoring()
+    expect(usePracticeStore.getState().authoring).toBeNull()
+  })
+
+  it('keeps the arrangement on this device, per node, and nowhere else', () => {
     const fetchMock = stubBackend({})
+    usePracticeStore.getState().closeBlock('a', 'scratch')
+    usePracticeStore.getState().expandBlock('b', 'exercise:e1')
 
-    usePracticeStore.getState().selectTool('quiz')
-
+    const stored = JSON.parse(localStorage.getItem('learn-nodes.workbench') ?? '{}')
+    expect(stored.a.closed).toEqual(['scratch'])
+    expect(stored.b.expanded).toBe('exercise:e1')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reads a stored arrangement back, and ignores one it cannot parse', async () => {
+    localStorage.setItem('learn-nodes.workbench', JSON.stringify({ a: { expanded: 'scratch', closed: ['x'], opened: {} } }))
+    const { readArrangements } = await import('./workbench/arrangement')
+    expect(readArrangements()).toEqual({ a: { expanded: 'scratch', closed: ['x'], opened: {} } })
+
+    localStorage.setItem('learn-nodes.workbench', '{not json')
+    expect(readArrangements()).toEqual({})
   })
 })
 
@@ -394,69 +430,50 @@ describe('practice store — exercise buffers', () => {
     const a = usePracticeStore.getState().material.a
     expect(a?.status === 'ready' && a.attempts[0]?.runOutcome).toBe('completed')
   })
-
-  it('remembers which exercise the Code tool has open, per node', () => {
-    usePracticeStore.getState().selectExercise('a', 'ex-1')
-
-    expect(usePracticeStore.getState().selectedExercise).toEqual({ a: 'ex-1' })
-
-    usePracticeStore.getState().selectExercise('a', null)
-    expect(usePracticeStore.getState().selectedExercise.a).toBeNull()
-  })
 })
 
 describe('practice store — revealing delivered practice', () => {
-  it('switches to the tool, highlights the items and re-reads the node', async () => {
+  it('expands the block, highlights the items and re-reads the node', async () => {
     const fetchMock = stubBackend({
       'GET /api/practice/nodes/a': () => ({ body: material('a') }),
     })
 
-    usePracticeStore.getState().reveal({ nodeId: 'a', tool: 'quiz', itemIds: ['q-1', 'q-2'] })
+    usePracticeStore.getState().reveal({ nodeId: 'a', block: 'delivery:d1', itemIds: ['q-1', 'q-2'] })
 
     const state = usePracticeStore.getState()
-    expect(state.selectedTool).toBe('quiz')
+    expect(state.arrangements.a?.expanded).toBe('delivery:d1')
     expect(state.highlight).toMatchObject({ nodeId: 'a', itemIds: ['q-1', 'q-2'] })
     await vi.waitFor(() => expect(requests(fetchMock, 'GET')).toHaveLength(1))
   })
 
-  it('maps each delivered tool to its tab', () => {
+  it('reopens a block the learner closed', () => {
     stubBackend({ 'GET /api/practice/nodes/a': () => ({ body: material('a') }) })
+    usePracticeStore.getState().closeBlock('a', 'exercise:ex-9')
 
-    usePracticeStore.getState().reveal({ nodeId: 'a', tool: 'qa', itemIds: [] })
-    expect(usePracticeStore.getState().selectedTool).toBe('questions')
+    usePracticeStore.getState().reveal({ nodeId: 'a', block: 'exercise:ex-9', itemIds: ['ex-9'] })
 
-    usePracticeStore.getState().reveal({ nodeId: 'a', tool: 'code', itemIds: [] })
-    expect(usePracticeStore.getState().selectedTool).toBe('sandbox')
-  })
-
-  it('opens a delivered code exercise in the Code tool', () => {
-    stubBackend({ 'GET /api/practice/nodes/a': () => ({ body: material('a') }) })
-
-    usePracticeStore.getState().reveal({ nodeId: 'a', tool: 'code', itemIds: ['ex-9'] })
-
-    expect(usePracticeStore.getState().selectedExercise.a).toBe('ex-9')
+    expect(usePracticeStore.getState().arrangements.a).toMatchObject({ expanded: 'exercise:ex-9', closed: [] })
   })
 
   it('lets the highlight fade after a few seconds', async () => {
     vi.useFakeTimers()
     stubBackend({ 'GET /api/practice/nodes/a': () => ({ body: material('a') }) })
 
-    usePracticeStore.getState().reveal({ nodeId: 'a', tool: 'qa', itemIds: ['q-1'] })
+    usePracticeStore.getState().reveal({ nodeId: 'a', block: 'delivery:d1', itemIds: ['q-1'] })
     await vi.advanceTimersByTimeAsync(PRACTICE_HIGHLIGHT_MS)
 
     expect(usePracticeStore.getState().highlight).toBeNull()
   })
 
-  it('discarding forgets highlights, open exercises and exercise buffers', () => {
+  it('discarding forgets highlights and exercise buffers', () => {
     stubBackend({ 'GET /api/practice/nodes/a': () => ({ body: material('a') }) })
-    usePracticeStore.getState().reveal({ nodeId: 'a', tool: 'code', itemIds: ['ex-1'] })
+    usePracticeStore.getState().reveal({ nodeId: 'a', block: 'exercise:ex-1', itemIds: ['ex-1'] })
     usePracticeStore.getState().editSandbox('a', 'x', 'ex-1')
 
     usePracticeStore.getState().discard()
 
     const state = usePracticeStore.getState()
     expect(state.highlight).toBeNull()
-    expect(state.selectedExercise).toEqual({})
     expect(state.buffers).toEqual({})
   })
 })

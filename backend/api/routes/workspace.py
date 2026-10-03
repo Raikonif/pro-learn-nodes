@@ -19,7 +19,7 @@ from api.dependencies.auth import ActiveProfile, WorkspaceScope
 from api.dependencies.runtime import RuntimeDep
 from core.exceptions import NotFoundError, ValidationError
 from core.runtime import RuntimeState
-from service import retrieval, workspace
+from service import projects, retrieval, workspace
 from service.agent import registry as agent_registry
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -40,6 +40,8 @@ class BranchNodeInput(InputModel):
     source_node_id: str = Field(alias="sourceNodeId")
     anchor: AnchorInput
     overrides: dict[str, Any] | None = None
+    # Absent: the new node joins the source node's project.
+    project_id: str | None = Field(default=None, alias="projectId")
 
 
 class RootNodeInput(InputModel):
@@ -49,10 +51,25 @@ class RootNodeInput(InputModel):
     body: str = ""
     active_skills: list[str] = Field(default_factory=list, alias="activeSkills")
     mcp_servers: list[str] = Field(default_factory=list, alias="mcpServers")
+    # Absent: the workspace's default project.
+    project_id: str | None = Field(default=None, alias="projectId")
 
 
 class ChildNodeInput(InputModel):
     parent_node_id: str = Field(alias="parentNodeId")
+
+
+class ProjectInput(InputModel):
+    name: str
+
+
+class ProjectChangeInput(InputModel):
+    name: str | None = None
+    instructions: str | None = None
+
+
+class NodeProjectInput(InputModel):
+    project_id: str = Field(alias="projectId")
 
 
 class ThreadInput(InputModel):
@@ -73,6 +90,16 @@ class TitleInput(InputModel):
 
 class BackendInput(InputModel):
     agent_id: str = Field(alias="agentId")
+
+
+class AgentSettingsInput(InputModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    model: str | None = None
+    effort: str | None = None
+    fast: str | None = None
+    mode: str | None = None
+    confirmed_unasked: bool = Field(default=False, alias="confirmedUnasked")
 
 
 class ContextInput(InputModel):
@@ -118,6 +145,7 @@ async def branch_node(
             payload.source_node_id,
             payload.anchor.model_dump(by_alias=True),
             payload.overrides,
+            payload.project_id,
         )
     except Exception as error:
         raise _domain_error(error)
@@ -135,6 +163,7 @@ async def root_node(
             payload.body,
             payload.active_skills,
             payload.mcp_servers,
+            payload.project_id,
         )
     except Exception as error:
         raise _domain_error(error)
@@ -164,6 +193,25 @@ async def node_backend(
         raise _domain_error(error)
 
 
+@router.put("/nodes/{node_id}/agent-settings")
+async def node_agent_settings(
+    node_id: str,
+    payload: AgentSettingsInput,
+    _runtime: RuntimeDep,
+    profile: ActiveProfile,
+    workspace_id: WorkspaceScope,
+) -> dict[str, Any]:
+    # Only keys the caller sent change; a key sent as null returns that
+    # control to the agent's default.
+    changes = payload.model_dump(exclude_unset=True, exclude={"confirmed_unasked"})
+    try:
+        return agent_registry.set_node_agent_settings(
+            profile.id, workspace_id, node_id, changes, confirmed_unasked=payload.confirmed_unasked
+        )
+    except Exception as error:
+        raise _domain_error(error)
+
+
 @router.put("/nodes/{node_id}/title")
 async def node_title(
     node_id: str, payload: TitleInput, _runtime: RuntimeDep, workspace_id: WorkspaceScope
@@ -189,6 +237,79 @@ async def archive_node(node_id: str, _runtime: RuntimeDep, workspace_id: Workspa
 async def restore_node(node_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope) -> dict[str, Any]:
     try:
         return workspace.restore_node(workspace_id, node_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.post("/projects")
+async def create_project(
+    payload: ProjectInput, _runtime: RuntimeDep, workspace_id: WorkspaceScope
+) -> dict[str, Any]:
+    try:
+        return projects.create(workspace_id, payload.name)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.get("/projects/archived")
+async def archived_projects(_runtime: RuntimeDep, workspace_id: WorkspaceScope) -> dict[str, Any]:
+    try:
+        return projects.list_archived(workspace_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.patch("/projects/{project_id}")
+async def change_project(
+    project_id: str,
+    payload: ProjectChangeInput,
+    _runtime: RuntimeDep,
+    workspace_id: WorkspaceScope,
+) -> dict[str, Any]:
+    try:
+        return projects.update(workspace_id, project_id, payload.name, payload.instructions)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.post("/projects/{project_id}/archive")
+async def archive_project(
+    project_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope
+) -> dict[str, Any]:
+    try:
+        return projects.archive(workspace_id, project_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.post("/projects/{project_id}/restore")
+async def restore_project(
+    project_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope
+) -> dict[str, Any]:
+    try:
+        return projects.restore(workspace_id, project_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+# Distinct from archiving, and the only place a project is destroyed. It never
+# deletes a session: they move to the default project.
+@router.delete("/projects/{project_id}")
+async def delete_project(
+    project_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope
+) -> dict[str, Any]:
+    try:
+        return projects.delete(workspace_id, project_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.put("/nodes/{node_id}/project")
+async def node_project(
+    node_id: str, payload: NodeProjectInput, _runtime: RuntimeDep, workspace_id: WorkspaceScope
+) -> dict[str, Any]:
+    try:
+        return projects.move_node(workspace_id, node_id, payload.project_id)
     except Exception as error:
         raise _domain_error(error)
 

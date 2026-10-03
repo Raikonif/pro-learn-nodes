@@ -132,6 +132,65 @@ describe('streamTurn — practice delivery and commands', () => {
   })
 })
 
+describe('streamTurn — session state and context usage (agent-session-controls)', () => {
+  it('yields the state the session runs with and its context usage', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          sseResponse(
+            [
+              'event: session.state',
+              'data: {"model":"opus","effort":"high","fast":"on","mode":"auto","modeGroup":"unasked"}',
+              '',
+              'event: context.usage',
+              'data: {"used":17140,"size":258400}',
+              '',
+              '',
+            ].join('\n'),
+          ),
+        ),
+      ),
+    )
+
+    expect(await collect(streamTurn('t-1', 'x'))).toEqual([
+      { type: 'session.state', model: 'opus', effort: 'high', fast: 'on', mode: 'auto', modeGroup: 'unasked' },
+      { type: 'context.usage', used: 17140, size: 258400 },
+    ])
+  })
+
+  it('reads an unrecognised mode group as acting without asking, and nulls what is absent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(sseResponse('event: session.state\ndata: {"mode":"mystery","modeGroup":"odd"}\n\n')),
+      ),
+    )
+
+    expect(await collect(streamTurn('t-1', 'x'))).toEqual([
+      { type: 'session.state', model: null, effort: null, fast: null, mode: 'mystery', modeGroup: 'unasked' },
+    ])
+  })
+
+  it('skips a usage report without a used and total size', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(sseResponse('event: context.usage\ndata: {"used":12}\n\n'))),
+    )
+
+    expect(await collect(streamTurn('t-1', 'x'))).toEqual([])
+  })
+
+  it('sends an agent command as ordinary text, with no command beside it', async () => {
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(sseResponse('')))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await collect(streamTurn('t-1', '/compact'))
+
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ threadId: 't-1', text: '/compact' })
+  })
+})
+
 describe('cancelTurn', () => {
   it('posts to the turn cancel route and accepts a 204', async () => {
     const fetchMock = vi.fn((_url: string, _init?: RequestInit) =>

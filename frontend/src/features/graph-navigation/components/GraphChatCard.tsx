@@ -1,10 +1,86 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
 
-import type { GraphFlowNode } from './graph-adapter'
+import type { GraphFlowNode, GraphNodeData } from './graph-adapter'
+
+/**
+ * "linked to N archived": a link whose other end is archived is kept, so the
+ * card says it exists instead of showing no link at all, and listing the
+ * archived sessions offers to restore them rather than reporting a broken link.
+ * Restoring is refused while the session's project is archived; the reason the
+ * backend gives is shown here, where the learner asked.
+ */
+function ArchivedLinks({ links }: { links: GraphNodeData['archivedLinks'] }) {
+  const restoreNode = useWorkspaceStore((state) => state.restoreNode)
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function restore(nodeId: string): Promise<void> {
+    setError(null)
+    try {
+      await restoreNode(nodeId)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }
+
+  return (
+    <div className="nodrag nopan relative">
+      <button
+        type="button"
+        data-testid="archived-links-toggle"
+        aria-expanded={open}
+        aria-label={`Linked to ${links.length} archived`}
+        // The card activates on Enter and Space; this control is not the card.
+        onKeyDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          setOpen((value) => !value)
+        }}
+        className="text-xs font-medium text-amber-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      >
+        linked to {links.length} archived
+      </button>
+      {open ? (
+        <div
+          data-testid="archived-links-list"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          className="absolute left-0 top-full z-20 mt-1 flex w-56 flex-col gap-1 rounded-md border border-gray-200 bg-white p-2 shadow-md"
+        >
+          <ul aria-label="Archived links" className="flex flex-col gap-1">
+            {links.map((link) => (
+              <li key={link.archivedNodeId} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-xs text-gray-700">{link.archivedTitle}</span>
+                <button
+                  type="button"
+                  aria-label={`Restore ${link.archivedTitle}`}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void restore(link.archivedNodeId)
+                  }}
+                  className="shrink-0 text-xs font-medium text-blue-700 hover:underline"
+                >
+                  Restore
+                </button>
+              </li>
+            ))}
+          </ul>
+          {error ? (
+            <p role="alert" className="text-[11px] text-red-700">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 /**
  * Compact, keyboard-activatable node representation used by both graph
@@ -14,7 +90,7 @@ import type { GraphFlowNode } from './graph-adapter'
 function GraphChatCard({ data, isConnectable }: NodeProps<GraphFlowNode>) {
   const openNode = useWorkspaceStore((state) => state.openNode)
   const createChildNodeFrom = useWorkspaceStore((state) => state.createChildNodeFrom)
-  const { node, title, mode, isCurrent, variant } = data
+  const { node, title, mode, isCurrent, variant, archivedLinks } = data
   const isMinimap = variant === 'minimap'
 
   const activateCard = () => openNode(node.id)
@@ -78,6 +154,7 @@ function GraphChatCard({ data, isConnectable }: NodeProps<GraphFlowNode>) {
           <span aria-hidden="true">+</span>
         </button>
       )}
+      {!isMinimap && archivedLinks.length > 0 ? <ArchivedLinks links={archivedLinks} /> : null}
       <Handle
         type="source"
         position={Position.Bottom}

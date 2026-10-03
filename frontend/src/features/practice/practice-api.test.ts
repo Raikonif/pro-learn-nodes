@@ -41,6 +41,7 @@ const FREE_ITEM = {
   starterCode: null,
   expectedOutput: null,
   authoredBy: null,
+  deliveryId: null,
 }
 
 const CHOICE_ITEM = {
@@ -57,6 +58,7 @@ const CHOICE_ITEM = {
   starterCode: null,
   expectedOutput: null,
   authoredBy: { agentId: 'agent-codex', name: 'Codex' },
+  deliveryId: 'delivery-1',
 }
 
 const ATTEMPT = {
@@ -83,6 +85,7 @@ const EXERCISE = {
   starterCode: 'total = 0\n',
   expectedOutput: '55',
   authoredBy: { agentId: 'agent-claude', name: 'Claude' },
+  deliveryId: 'delivery-2',
 }
 
 const MATERIAL = {
@@ -158,11 +161,12 @@ describe('practice api — authorship and code exercises on the wire', () => {
     })
   })
 
-  it('still reads a payload from before authorship and exercises, as learner-written', async () => {
+  it('still reads a payload from before authorship, exercises and deliveries, as learner-written', async () => {
     const {
       starterCode: _s,
       expectedOutput: _e,
       authoredBy: _a,
+      deliveryId: _d,
       ...oldItem
     } = FREE_ITEM
     const { runOutcome: _o, runOutput: _r, ...oldAttempt } = ATTEMPT

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import { __resetIdCounter, useWorkspaceStore } from '../../../shared/lib/workspace-store'
 import type { ChatMessage } from '../../../shared/lib/workspace-types'
-import { revealPractice } from '../../practice'
+import { revealDelivery } from '../../practice'
 import { useTurnStore } from '../turn-store'
 
 import NodeConversation from './NodeConversation'
@@ -11,7 +11,7 @@ import NodeConversation from './NodeConversation'
 // The practice rail is its own feature with its own suite; here only what the
 // conversation asks of it — through the public surface — is observed.
 vi.mock('../../practice', () => ({
-  revealPractice: vi.fn(),
+  revealDelivery: vi.fn(),
   practiceToolLabel: (tool: string) => ({ code: 'Code', qa: 'Q&A', quiz: 'Quiz' })[tool] ?? tool,
 }))
 
@@ -92,7 +92,7 @@ beforeEach(() => {
   useWorkspaceStore.getState().reset()
   useTurnStore.getState().reset()
   __resetIdCounter()
-  vi.mocked(revealPractice).mockClear()
+  vi.mocked(revealDelivery).mockClear()
   Element.prototype.scrollIntoView = vi.fn()
 })
 
@@ -204,19 +204,21 @@ describe('NodeConversation — practice delivered during a turn (4c.3)', () => {
       agentName: 'Codex',
     })
 
-    expect(revealPractice).toHaveBeenCalledWith({
+    expect(revealDelivery).toHaveBeenCalledWith({
       nodeId: 'n-haskell',
       tool: 'quiz',
+      messageId: 'm-delivery',
       itemIds: ['i-1', 'i-2', 'i-3'],
     })
     const line = screen.getByTestId('practice-delivered')
     expect(line).toHaveTextContent('Codex sent 3 questions to Quiz')
 
-    vi.mocked(revealPractice).mockClear()
+    vi.mocked(revealDelivery).mockClear()
     fireEvent.click(within(line).getByRole('button', { name: 'Open in Quiz →' }))
-    expect(revealPractice).toHaveBeenCalledWith({
+    expect(revealDelivery).toHaveBeenCalledWith({
       nodeId: 'n-haskell',
       tool: 'quiz',
+      messageId: 'm-delivery',
       itemIds: ['i-1', 'i-2', 'i-3'],
     })
   })
@@ -257,7 +259,7 @@ describe('NodeConversation — practice delivered during a turn (4c.3)', () => {
       agentName: 'Codex',
     })
 
-    expect(revealPractice).not.toHaveBeenCalled()
+    expect(revealDelivery).not.toHaveBeenCalled()
   })
 
   it('folds the delivery into the record when the turn ends', async () => {
@@ -314,7 +316,12 @@ describe('NodeConversation — recorded deliveries (after a reload)', () => {
     const line = screen.getByTestId('practice-delivered')
     expect(line).toHaveTextContent('Codex sent 2 questions to Q&A')
     fireEvent.click(within(line).getByRole('button', { name: 'Open in Q&A →' }))
-    expect(revealPractice).toHaveBeenCalledWith({ nodeId: 'n-haskell', tool: 'qa', itemIds: ['q-1', 'q-2'] })
+    expect(revealDelivery).toHaveBeenCalledWith({
+      nodeId: 'n-haskell',
+      tool: 'qa',
+      messageId: 'r-delivery',
+      itemIds: ['q-1', 'q-2'],
+    })
   })
 
   it('renders a recorded delivery with unreadable data as text alone', () => {

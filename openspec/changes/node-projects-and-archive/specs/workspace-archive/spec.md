@@ -1,53 +1,41 @@
 ## Purpose
 
-Lets a learner retire a finished project or node so it leaves the canvas and the recency listing without being destroyed — archived material stays searchable, keeps every link it had, and can be restored to exactly the state it was retired in.
+Lets a learner put a finished project away with the sessions it holds, so they leave the canvas and the history without being destroyed, and bring it back to exactly the state it was put away in. It builds on session archiving (`session-history`), which it leaves unchanged.
 
 ## ADDED Requirements
 
-### Requirement: Archiving is a reversible state and never destroys data
-The system SHALL record archived as a state on a project and on a node. Archiving SHALL NOT delete or alter the archived item's title, body, mode, instructions, attached sources, threads, messages, selection anchors, project membership, or links. Restoring SHALL return the item to the unarchived state with all of that intact.
+### Requirement: Archiving a project is a reversible state and never destroys data
+The system SHALL record archived as a state on a project. Archiving a project SHALL NOT delete or alter its name or instructions, nor any member node's conversations, threads, messages, anchors, practice, membership, or links. Restoring SHALL return the project to the unarchived state with all of that intact. The default project SHALL NOT be archived.
 
 #### Scenario: Archiving preserves everything
-- **WHEN** a learner archives a node holding conversations, anchors, and links
-- **THEN** the node is marked archived and its conversations, anchors, project membership, and links are unchanged
-
-#### Scenario: Restoring returns the item as it was
-- **WHEN** a learner restores a previously archived node
-- **THEN** the node is unarchived and presents the same conversations, anchors, membership, and links it had before archiving
+- **WHEN** a learner archives a project whose sessions hold conversations, practice, and links
+- **THEN** the project and its sessions are archived and all of that is unchanged
 
 #### Scenario: Archive state survives a restart
 - **WHEN** a learner archives a project, closes the application, and opens it again
-- **THEN** the project is still archived and its nodes are still archived
+- **THEN** the project is still archived and its sessions are still archived
 
-### Requirement: Archived material leaves the canvas, the recency listing, and every default listing
-The system SHALL exclude archived nodes from the graph canvas, from the left rail's recency listing, and from every listing that does not explicitly ask for archived material. The system SHALL exclude archived projects from project listings and SHALL NOT offer an archived project as a destination when moving a node. Restoring an item SHALL return it to those surfaces.
+#### Scenario: The default project cannot be archived
+- **WHEN** a learner attempts to archive the default project
+- **THEN** the attempt is refused with the reason, and nothing is archived
 
-#### Scenario: An archived node leaves the canvas
-- **WHEN** a learner archives a node that was rendered on the canvas
-- **THEN** the canvas no longer renders a card for it and the left rail's recency listing no longer lists it
+### Requirement: An archived project leaves every listing and remains restorable
+An archived project SHALL be absent from the project filter, from project choices when creating or moving a session, and from the palette's project commands. The left rail SHALL list archived projects separately, each with its number of sessions, and offer restoring each.
 
 #### Scenario: An archived project is not a move destination
-- **WHEN** a learner chooses a project to move a node into
-- **THEN** archived projects are not offered as destinations
+- **WHEN** a learner chooses a project to move a session into
+- **THEN** archived projects are not offered
 
-#### Scenario: Restoring returns the node to the canvas
-- **WHEN** a learner restores an archived node
-- **THEN** the canvas renders it again and it becomes eligible for the recency listing
+#### Scenario: Restoring from the archived list
+- **WHEN** the learner restores a project from the archived projects list
+- **THEN** it returns to the filter and its archived-with sessions return to the history and the canvas
 
-### Requirement: Archived material remains findable by explicit search and openable from the results
-The system SHALL include archived nodes and archived projects in search results when the learner asks for archived material, and SHALL mark each such result as archived. Opening an archived item from search SHALL present it and SHALL NOT change its archived state; only an explicit restore SHALL unarchive it.
+### Requirement: Sessions archived with their project remain findable
+Sessions archived with their project SHALL be returned by the history search when archived sessions are included, like any archived session. Restoring one of them while its project is archived SHALL be refused with an indication that the project must be restored first.
 
-#### Scenario: Search finds an archived node when asked
-- **WHEN** a learner searches for a term matching an archived node and asks for archived material to be included
-- **THEN** the node appears in the results marked as archived
-
-#### Scenario: Default search omits archived material
-- **WHEN** a learner searches without asking for archived material
-- **THEN** archived nodes and archived projects are absent from the results
-
-#### Scenario: Opening does not restore
-- **WHEN** a learner opens an archived node from search results
-- **THEN** the node is presented, is indicated as archived, and remains archived until the learner restores it
+#### Scenario: Finding a session of an archived project
+- **WHEN** the learner searches with archived sessions included for a phrase from a session of an archived project
+- **THEN** that session is returned, marked archived
 
 ### Requirement: A project may be archived while it holds unarchived nodes, which are archived with it
 The system SHALL permit archiving a project regardless of how many unarchived nodes it holds. Archiving a project SHALL archive every unarchived node whose membership is that project, and SHALL record that each such node was archived as a consequence of its project. A node that was already archived on its own before the project was archived SHALL NOT be recorded that way.
@@ -97,17 +85,13 @@ The system SHALL preserve every link attached to an archived node, whichever pro
 - **WHEN** the archived end of a cross-project link is restored
 - **THEN** the canvas draws the link between the two nodes as it did before
 
-### Requirement: Deletion stays a separate, confirmed action distinct from archiving
-The system SHALL offer deletion of a project or a node as an action distinct from archiving, stating what will be destroyed and requiring a confirmation that names that consequence. Archiving SHALL NOT be presented as, or implemented as, a step towards deletion, and no archive or restore SHALL destroy data. Deleting an archived item SHALL require the same confirmation as deleting an unarchived one.
-
-#### Scenario: Archiving asks for no destructive confirmation
-- **WHEN** a learner archives a project
-- **THEN** the system archives it without warning of data loss, because none occurs
+### Requirement: Deleting a project is separate from archiving and never deletes a session
+The system SHALL offer deleting a project as an action distinct from archiving, stating before it happens that the project's sessions will move to the default project, and requiring confirmation. On confirmation every member session, archived or not, SHALL move to the default project with its content and links intact, and the project SHALL be removed. Sessions SHALL remain undeletable. The default project SHALL NOT be deleted.
 
 #### Scenario: Deletion names its consequence
-- **WHEN** a learner asks to delete an archived node
-- **THEN** the system states that the node's conversations will be permanently destroyed and proceeds only after the learner confirms
+- **WHEN** a learner asks to delete a project
+- **THEN** the system states that its sessions will move to the default project and proceeds only after confirmation
 
-#### Scenario: Archived material is not swept
-- **WHEN** material has been archived for any length of time
-- **THEN** it is not deleted by the system, and remains searchable and restorable until a learner explicitly deletes it
+#### Scenario: Sessions survive their project's deletion
+- **WHEN** a learner confirms deleting a project holding archived and unarchived sessions
+- **THEN** the project is gone, every one of its sessions belongs to the default project, and the archived ones are still archived

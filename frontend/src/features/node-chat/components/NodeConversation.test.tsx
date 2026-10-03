@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { __resetIdCounter, useWorkspaceStore } from '../../../shared/lib/workspace-store'
+import { useProjectsUi } from '../../projects'
 import { useAgentsStore } from '../../settings'
 
 import NodeConversation from './NodeConversation'
@@ -29,6 +30,37 @@ describe('NodeConversation', () => {
     expect(screen.getByText(/Haskell defers evaluation/)).toBeInTheDocument()
     // Messages from a spawned thread stay out of the center until expanded.
     expect(screen.queryByText(/what exactly is a thunk/)).not.toBeInTheDocument()
+  })
+
+  it('names the session\'s project in the header and opens its instructions', async () => {
+    let id = ''
+    await act(async () => {
+      id = await useWorkspaceStore.getState().createProject('Algebra')
+      await useWorkspaceStore.getState().moveNodeToProject('n-haskell', id)
+    })
+    openConversation('n-haskell')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project Algebra: show instructions' }))
+
+    expect(useProjectsUi.getState().dialog).toEqual({ kind: 'instructions', projectId: id })
+  })
+
+  it('shows the project of the session that is open, not of one it links to', () => {
+    openConversation('n-functors')
+
+    expect(screen.getByTestId('session-project-link')).toHaveTextContent('General')
+  })
+
+  it('shows no project for a session whose project is not known', () => {
+    useWorkspaceStore.setState((state) => ({
+      graph: {
+        ...state.graph,
+        nodes: state.graph.nodes.map((n) => (n.id === 'n-haskell' ? { ...n, projectId: null } : n)),
+      },
+    }))
+    openConversation('n-haskell')
+
+    expect(screen.queryByTestId('session-project-link')).not.toBeInTheDocument()
   })
 
   it('offers no delete action on the main thread', () => {

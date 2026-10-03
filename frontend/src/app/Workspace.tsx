@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 
 import { GraphCanvas, GraphRail, RecentsRail } from '../features/graph-navigation'
-import { NodeConversation, ThreadList } from '../features/node-chat'
-import { PracticeRail } from '../features/practice'
-import { EmptyWorkspaceStart, QuickStartButton } from '../features/study-launcher'
+import { NodeConversation, ThreadList, placeInComposer } from '../features/node-chat'
+import { PracticeRail, useHasExpandedBlock } from '../features/practice'
+import { ProjectDialogHost } from '../features/projects'
+import { CommandPalette } from '../features/command-surface'
+import { DetailedStartHost, EmptyWorkspaceStart, QuickStartButton } from '../features/study-launcher'
+import ResizeHandle from '../shared/components/ResizeHandle'
+import {
+  CENTER_MIN,
+  fitToWindow,
+  railMax,
+  railMin,
+  usePaneLayout,
+  type RailSide,
+} from '../shared/lib/pane-layout'
 import { useWorkspaceStore } from '../shared/lib/workspace-store'
 
 import { AccountAffordance } from '../features/account'
@@ -57,6 +68,63 @@ function useMeasuredHeight(ref: React.RefObject<HTMLElement | null>): number | u
   return height
 }
 
+/** The window's width, kept current so the rails can be fitted to it. */
+function useWindowWidth(): number {
+  const [width, setWidth] = useState(() => window.innerWidth)
+
+  useEffect(() => {
+    const update = () => setWidth(window.innerWidth)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+
+  return width
+}
+
+const RAIL_NAMES: Record<RailSide, string> = { left: 'node index', right: 'workspace tools' }
+const RAIL_IDS: Record<RailSide, string> = { left: 'workspace-left-rail', right: 'workspace-right-rail' }
+
+/** The header control that collapses or expands one rail. */
+function RailToggle({ side }: { side: RailSide }) {
+  const collapsed = usePaneLayout((s) => s[side].collapsed)
+  const toggle = usePaneLayout((s) => s.toggleCollapsed)
+  // The glyph points the way the rail will move: a left rail collapses
+  // leftward, a right rail rightward.
+  const glyph = (side === 'left') === collapsed ? '»' : '«'
+
+  return (
+    <button
+      type="button"
+      onClick={() => toggle(side)}
+      aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${RAIL_NAMES[side]}`}
+      aria-expanded={!collapsed}
+      aria-controls={RAIL_IDS[side]}
+      className="rounded border border-gray-300 bg-white px-2 py-0.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+    >
+      {glyph}
+    </button>
+  )
+}
+
+/** What a collapsed rail leaves behind: a thin strip that expands it again. */
+function CollapsedStrip({ side }: { side: RailSide }) {
+  const setCollapsed = usePaneLayout((s) => s.setCollapsed)
+
+  return (
+    <button
+      type="button"
+      onClick={() => setCollapsed(side, false)}
+      aria-label={`Show ${RAIL_NAMES[side]}`}
+      aria-controls={RAIL_IDS[side]}
+      className={`flex w-7 shrink-0 items-start justify-center bg-white pt-2 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-800 ${
+        side === 'left' ? 'border-r' : 'border-l'
+      } border-gray-200`}
+    >
+      {side === 'left' ? '»' : '«'}
+    </button>
+  )
+}
+
 function Workspace() {
   const status = useWorkspaceStore((s) => s.status)
   const startupError = useWorkspaceStore((s) => s.startupError)
@@ -68,16 +136,43 @@ function Workspace() {
   const hasNoSessions = useWorkspaceStore((s) => s.graph.nodes.length === 0)
   const rightRailRef = useRef<HTMLElement | null>(null)
   const rightRailHeight = useMeasuredHeight(rightRailRef)
+  // An expanded block gets the rail's height; the minimap gives way to its breadcrumb.
+  const blockExpanded = useHasExpandedBlock(openNodeId)
+
+  // The store holds what the learner chose; what renders is that choice
+  // fitted to the window, so the center never drops below its minimum and a
+  // narrower window never overwrites the stored widths.
+  const windowWidth = useWindowWidth()
+  const left = usePaneLayout((s) => s.left)
+  const right = usePaneLayout((s) => s.right)
+  const setWidth = usePaneLayout((s) => s.setWidth)
+  const resetWidth = usePaneLayout((s) => s.resetWidth)
+  const rendered = fitToWindow({ left, right }, windowWidth)
+  const [dragging, setDragging] = useState(false)
+
+  // A drag may take a rail only as far as the center's minimum allows.
+  function handleMax(side: RailSide): number {
+    const other = side === 'left' ? rendered.right : rendered.left
+    return Math.max(railMin(side), Math.min(railMax(side, windowWidth), windowWidth - CENTER_MIN - other))
+  }
+
+  const leftRailStyle = { '--left-rail': `${rendered.left}px` } as CSSProperties
+  const rightRailStyle = { '--right-rail': `${rendered.right}px` } as CSSProperties
+  const isReady = status === 'ready'
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50 text-gray-900">
+    <div className={`flex h-screen flex-col bg-gray-50 text-gray-900 ${dragging ? 'select-none' : ''}`}>
       <header className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
-        <h1 className="text-sm font-semibold tracking-tight">Learn Nodes</h1>
+        <div className="flex items-center gap-3">
+          {isReady && <RailToggle side="left" />}
+          <h1 className="text-sm font-semibold tracking-tight">Learn Nodes</h1>
+        </div>
         <div className="flex items-center gap-4">
           <AgentSettingsButton />
           <MemoryButton />
           <AccountAffordance />
           <BackendStatus />
+          {isReady && <RailToggle side="right" />}
         </div>
       </header>
 
@@ -106,13 +201,33 @@ function Workspace() {
           </main>
         ) : (
           <>
+        {/* A collapsed rail stays mounted, only hidden, so whatever it was
+            holding — a search in progress, a selected tool — is there when
+            it is expanded. Its width is the one inline style allowed. */}
         <aside
+          id={RAIL_IDS.left}
           aria-label="Node index"
           data-testid="left-rail"
-          className="flex w-44 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white lg:w-56"
+          hidden={left.collapsed}
+          style={leftRailStyle}
+          className={`${left.collapsed ? 'hidden' : 'flex'} w-[var(--left-rail)] shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white`}
         >
           <RecentsRail headerAction={<QuickStartButton />} />
         </aside>
+        {left.collapsed ? (
+          <CollapsedStrip side="left" />
+        ) : (
+          <ResizeHandle
+            side="left"
+            label="Resize node index"
+            value={rendered.left}
+            min={railMin('left')}
+            max={handleMax('left')}
+            onChange={(width) => setWidth('left', width, windowWidth)}
+            onReset={() => resetWidth('left')}
+            onDraggingChange={setDragging}
+          />
+        )}
 
         <main
           aria-label={isNodeOpen ? 'Node conversation' : hasNoSessions ? 'Start a session' : 'Session graph'}
@@ -131,11 +246,28 @@ function Workspace() {
           )}
         </main>
 
+        {right.collapsed ? (
+          <CollapsedStrip side="right" />
+        ) : (
+          <ResizeHandle
+            side="right"
+            label="Resize workspace tools"
+            value={rendered.right}
+            min={railMin('right')}
+            max={handleMax('right')}
+            onChange={(width) => setWidth('right', width, windowWidth)}
+            onReset={() => resetWidth('right')}
+            onDraggingChange={setDragging}
+          />
+        )}
         <aside
           ref={rightRailRef}
+          id={RAIL_IDS.right}
           aria-label="Workspace tools"
           data-testid="right-rail"
-          className="flex w-48 shrink-0 flex-col overflow-hidden border-l border-gray-200 bg-white lg:w-72"
+          hidden={right.collapsed}
+          style={rightRailStyle}
+          className={`${right.collapsed ? 'hidden' : 'flex'} w-[var(--right-rail)] shrink-0 flex-col overflow-hidden border-l border-gray-200 bg-white`}
         >
           {isNodeOpen && (
             <>
@@ -143,10 +275,10 @@ function Workspace() {
                   Not peer tabs — a map you have to select a tab to see gives
                   no orientation, which is the only reason it moved here. */}
               <div data-testid="right-rail-map" className="shrink-0 border-b border-gray-200">
-                <GraphRail availableHeight={rightRailHeight} />
+                <GraphRail availableHeight={rightRailHeight} collapsed={blockExpanded} />
               </div>
               <div data-testid="right-rail-tools" className="min-h-0 flex-1 overflow-y-auto">
-                <PracticeRail />
+                <PracticeRail onAskAgent={placeInComposer} />
               </div>
             </>
           )}
@@ -157,6 +289,12 @@ function Workspace() {
 
       <AgentSettingsPanel />
       <MemoryPanel />
+      {/* The palette's "Start with a topic…" opens the one dialog from here. */}
+      <DetailedStartHost />
+      {/* The project dialogs (new, rename, instructions, delete) open from the
+          rail, the session header and the palette; one host serves them all. */}
+      <ProjectDialogHost />
+      <CommandPalette />
     </div>
   )
 }

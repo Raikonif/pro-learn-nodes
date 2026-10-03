@@ -6,23 +6,29 @@ import {
   threadsAnchoredTo,
 } from '../../../shared/lib/fixtures'
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
+import { SessionProject } from '../../projects'
 import { isMainThread, type ChatMessage } from '../../../shared/lib/workspace-types'
 import { readDelivery, readNotDelivered } from '../delivery'
+import { useSessionAgent } from '../hooks/use-session-agent'
 import { MESSAGE_CONTENT_ATTR } from '../hooks/use-text-selection'
 import { liveMessageIds, useTurnStore } from '../turn-store'
 
 import Composer from './Composer'
 import NodeBackend from './NodeBackend'
 import SelectionAffordance from './SelectionAffordance'
+import SessionControls from './SessionControls'
+import BranchOrigin from './BranchOrigin'
 import ThreadBackLink from './ThreadBackLink'
 import ThreadStub from './ThreadStub'
 import {
   ContinuitySeamNotice,
+  EmptyReply,
   LiveTurnEntries,
   OutcomeBadge,
   PermissionRefusedNotice,
   PracticeDeliveredEntry,
   PracticeNotDeliveredNotice,
+  SettingsNotice,
   ToolEntry,
   TurnNotice,
 } from './TurnEntries'
@@ -92,6 +98,7 @@ function NodeConversation() {
   const thread = graph.threads.find((t) => t.id === openThreadId)
   const recorded = thread ? messagesForThread(graph, thread.id) : []
   const highlighted = useRevealedMessage(recorded.map((message) => message.id))
+  const session = useSessionAgent(node, openThreadId)
 
   if (!node || !thread) {
     return (
@@ -113,20 +120,23 @@ function NodeConversation() {
           <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
             {node.mode}
           </span>
+          <SessionProject projectId={node.projectId} />
           <span>{spawned ? thread.name : 'main'}</span>
         </p>
         <NodeBackend node={node} />
+        <SessionControls node={node} agent={session} />
       </header>
 
-      {spawned ? <ThreadBackLink thread={thread} /> : null}
+      {spawned ? <ThreadBackLink thread={thread} /> : <BranchOrigin nodeId={node.id} />}
 
       <ul className="flex flex-col gap-4">
-        {messages.map((message) => (
+        {messages.map((message, index) => (
           <RecordedMessage
             key={message.id}
             message={message}
             nodeId={node.id}
             highlighted={message.id === highlighted}
+            learnerText={precedingLearnerText(messages, index)}
           />
         ))}
         {liveTurn ? <LiveTurnEntries turn={liveTurn} nodeId={node.id} /> : null}
@@ -138,11 +148,23 @@ function NodeConversation() {
         </div>
       ) : null}
 
-      <Composer threadId={thread.id} />
+      <Composer
+        threadId={thread.id}
+        agent={session?.offer?.offer?.known ? { name: session.name, commands: session.offer.offer.commands } : null}
+      />
 
       <SelectionAffordance />
     </section>
   )
+}
+
+/** The learner message an agent message answered: the nearest one before it. */
+function precedingLearnerText(messages: ChatMessage[], index: number): string | null {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const candidate = messages[i]
+    if (candidate.role === 'learner' && candidate.kind === 'message') return candidate.content
+  }
+  return null
 }
 
 /**
@@ -154,10 +176,13 @@ function RecordedMessage({
   message,
   nodeId,
   highlighted = false,
+  learnerText = null,
 }: {
   message: ChatMessage
   nodeId: string
   highlighted?: boolean
+  /** The learner message this one answered, for naming a command that ran with no reply. */
+  learnerText?: string | null
 }) {
   const graph = useWorkspaceStore((s) => s.graph)
 
@@ -183,7 +208,7 @@ function RecordedMessage({
     case 'practice_delivered':
       return (
         <li>
-          <PracticeDeliveredEntry nodeId={nodeId} text={message.content} delivery={readDelivery(message.data)} />
+          <PracticeDeliveredEntry nodeId={nodeId} text={message.content} delivery={readDelivery(message.id, message.data)} />
         </li>
       )
     case 'practice_not_delivered':
@@ -192,8 +217,25 @@ function RecordedMessage({
           <PracticeNotDeliveredNotice text={message.content} tool={readNotDelivered(message.data)} />
         </li>
       )
+    case 'settings_notice':
+      return (
+        <li>
+          <SettingsNotice text={message.content} />
+        </li>
+      )
     case 'message':
       break
+  }
+
+  if (message.role === 'agent' && message.outcome === 'completed' && !message.content.trim()) {
+    return (
+      <li className="flex flex-col" data-message-id={message.id}>
+        <span className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+          {ROLE_LABELS.agent}
+        </span>
+        <EmptyReply learnerText={learnerText} />
+      </li>
+    )
   }
 
   const stubs = threadsAnchoredTo(graph, message.id)

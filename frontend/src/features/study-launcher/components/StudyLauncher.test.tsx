@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
+import { FIXTURE_DEFAULT_PROJECT_ID } from '../../../shared/lib/fixtures'
 import { __resetIdCounter, useWorkspaceStore } from '../../../shared/lib/workspace-store'
 
-import DetailedStart from './DetailedStart'
+import { openDetailedStart, useLauncher } from '../launcher-store'
+
+import DetailedStart, { DetailedStartHost } from './DetailedStart'
 import EmptyWorkspaceStart from './EmptyWorkspaceStart'
 import QuickStartButton from './QuickStartButton'
 
@@ -15,6 +18,7 @@ beforeEach(() => {
   __resetIdCounter()
   useWorkspaceStore.getState().reset()
   useWorkspaceStore.setState({ createRootNode })
+  useLauncher.setState({ detailedOpen: false, hosted: false })
 })
 
 afterEach(() => {
@@ -110,7 +114,50 @@ describe('DetailedStart', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start' }))
 
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
-    expect(spy).toHaveBeenCalledWith({ mode: 'Review' })
+    expect(spy).toHaveBeenCalledWith({ mode: 'Review', projectId: FIXTURE_DEFAULT_PROJECT_ID })
+  })
+
+  describe('project picker', () => {
+    async function withAlgebra(): Promise<string> {
+      let id = ''
+      await act(async () => {
+        id = await useWorkspaceStore.getState().createProject('Algebra')
+      })
+      return id
+    }
+
+    it('offers the unarchived projects, preselecting the default one', async () => {
+      await withAlgebra()
+      let shelved = ''
+      await act(async () => {
+        shelved = await useWorkspaceStore.getState().createProject('Shelved')
+        await useWorkspaceStore.getState().archiveProject(shelved)
+      })
+      const dialog = openDialog()
+
+      const picker = within(dialog).getByLabelText('Project')
+      expect(picker).toHaveValue(FIXTURE_DEFAULT_PROJECT_ID)
+      expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual(['General', 'Algebra'])
+    })
+
+    it('preselects the project the history is filtered to', async () => {
+      const id = await withAlgebra()
+      act(() => useWorkspaceStore.getState().setProjectFilter(id))
+      const dialog = openDialog()
+
+      expect(within(dialog).getByLabelText('Project')).toHaveValue(id)
+    })
+
+    it('starts the session in the chosen project', async () => {
+      const id = await withAlgebra()
+      const dialog = openDialog()
+
+      fireEvent.change(within(dialog).getByLabelText('Project'), { target: { value: id } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Start' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(openedNode()).toMatchObject({ projectId: id })
+    })
   })
 
   it('confirms with the defaults untouched', async () => {
@@ -164,5 +211,39 @@ describe('EmptyWorkspaceStart', () => {
     const region = screen.getByRole('region', { name: 'Start a session' })
     expect(within(region).getByRole('button', { name: 'Start a new session' })).toBeInTheDocument()
     expect(within(region).getByRole('button', { name: 'Start with a topic…' })).toBeInTheDocument()
+  })
+})
+
+describe('openDetailedStart', () => {
+  it('opens the dialog the button opens', () => {
+    render(<DetailedStart />)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    act(() => openDetailedStart())
+
+    expect(screen.getByRole('dialog', { name: 'Start a session' })).toBeInTheDocument()
+  })
+
+  it('opens the one dialog a host renders, even with the button on screen', () => {
+    render(
+      <>
+        <DetailedStart />
+        <DetailedStartHost />
+      </>,
+    )
+
+    act(() => openDetailedStart())
+
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  })
+
+  it('opens it where only the host is mounted, and Cancel closes it', () => {
+    render(<DetailedStartHost />)
+
+    act(() => openDetailedStart())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(useLauncher.getState().detailedOpen).toBe(false)
   })
 })

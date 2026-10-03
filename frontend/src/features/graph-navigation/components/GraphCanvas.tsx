@@ -4,6 +4,7 @@ import {
   Background,
   Controls,
   ReactFlow,
+  type Node,
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -11,11 +12,11 @@ import '@xyflow/react/dist/style.css'
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
 
 import GraphChatCard from './GraphChatCard'
+import GraphProjectRegion from './GraphProjectRegion'
 import {
   layoutGraph,
   workspaceGraphToReactFlow,
   type GraphCanvasVariant,
-  type GraphFlowNode,
   type ReactFlowGraph,
 } from './graph-adapter'
 
@@ -26,7 +27,7 @@ export type GraphCanvasProps = {
 export type { GraphCanvasVariant, ReactFlowGraph }
 export { layoutGraph, workspaceGraphToReactFlow }
 
-const NODE_TYPES: NodeTypes = { chatCard: GraphChatCard }
+const NODE_TYPES: NodeTypes = { chatCard: GraphChatCard, projectRegion: GraphProjectRegion }
 
 function GraphCanvas({ variant = 'canvas' }: GraphCanvasProps) {
   const graph = useWorkspaceStore((state) => state.graph)
@@ -40,8 +41,15 @@ function GraphCanvas({ variant = 'canvas' }: GraphCanvasProps) {
     [graph, openNodeId, variant],
   )
 
+  // Regions first: they are drawn behind the cards, and React Flow paints in
+  // array order among nodes of the same z-index.
+  const flowNodes = useMemo(() => [...derived.regions, ...derived.nodes], [derived])
+
   const handleNodeClick = useCallback(
-    (_event: React.MouseEvent, node: GraphFlowNode) => openNode(node.id),
+    (_event: React.MouseEvent, node: Node) => {
+      // A region is a backdrop, not a session.
+      if (node.type === 'chatCard') openNode(node.id)
+    },
     [openNode],
   )
 
@@ -54,7 +62,7 @@ function GraphCanvas({ variant = 'canvas' }: GraphCanvasProps) {
       className="h-full w-full"
     >
       <ReactFlow
-        nodes={derived.nodes}
+        nodes={flowNodes}
         edges={derived.edges}
         nodeTypes={NODE_TYPES}
         onNodeClick={handleNodeClick}
