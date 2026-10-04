@@ -6,6 +6,7 @@ Lets a learner branch from a specific passage of a conversation — into either 
 
 ## Requirements
 
+
 ### Requirement: Selecting message text raises a two-action affordance
 Selecting a non-empty range of text within a conversation message SHALL raise an affordance offering exactly two actions: generate a node, and new chat. The affordance SHALL be raised for both learner and agent messages. Clearing the selection SHALL dismiss the affordance without creating anything.
 
@@ -29,7 +30,7 @@ Choosing either action SHALL capture a selection anchor recording the source mes
 - **THEN** the created branch carries an anchor holding the source message identifier, the selection start and end offsets, and a stored copy of the selected text
 
 ### Requirement: Generating a node creates a session visible in the graph
-Choosing "generate a node" SHALL create a new node linked to the node the selection came from, carrying the selection anchor. The new node SHALL appear in the graph and in the left rail. The new node SHALL inherit the source node's mode, active skills, and MCP servers unless the learner overrides them at creation.
+Choosing "generate a node" SHALL create a new node linked to the node the selection came from, carrying the selection anchor. The new node SHALL appear in the graph and in the left rail. The new node SHALL inherit the source node's project, mode, active skills, and MCP servers unless the learner overrides them at creation. When the learner names a different project, the link back to the source node SHALL still be created and SHALL cross the two projects rather than being refused.
 
 #### Scenario: Generated node appears in the graph
 - **WHEN** the learner chooses "generate a node" on a selection
@@ -37,7 +38,11 @@ Choosing "generate a node" SHALL create a new node linked to the node the select
 
 #### Scenario: Generated node inherits configuration
 - **WHEN** a node is generated from a selection without any overrides
-- **THEN** the new node's mode, active skills, and MCP servers match the source node's
+- **THEN** the new node's project, mode, active skills, and MCP servers match the source node's
+
+#### Scenario: Overriding the project still links back to the source
+- **WHEN** a node is generated from a selection with a project other than the source node's named
+- **THEN** the new node belongs to the named project and the link to the source node exists and crosses the two projects
 
 ### Requirement: Starting a new chat creates a thread on the current node
 Choosing "new chat" SHALL create a new conversation thread on the node the selection came from, carrying the selection anchor. No new node SHALL be created. The graph and the left rail SHALL be unchanged by this action.
