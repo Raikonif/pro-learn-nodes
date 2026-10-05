@@ -18,8 +18,10 @@ of reading a global.
 from __future__ import annotations
 
 import hashlib
+import secrets
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -137,6 +139,27 @@ class KeychainSecretStore:
 _fallback_store = InMemorySecretStore()
 
 
+# A random identity kept inside the data folder. It travels with the data when
+# the learner moves it (`data-location`), so the Keychain item named after it
+# is found again at the new path.
+DATA_IDENTITY_FILE = ".learn-nodes-id"
+
+
+def _legacy_service_for(data_dir: Path) -> str:
+    """The name used before the data folder carried its own identity: its path, hashed."""
+
+    digest = hashlib.sha256(str(data_dir.resolve()).encode("utf-8")).hexdigest()
+    return f"{KEYCHAIN_SERVICE}.{digest[:16]}"
+
+
+def data_identity(data_dir: Path) -> str | None:
+    try:
+        value = (data_dir / DATA_IDENTITY_FILE).read_text().strip()
+    except OSError:
+        return None
+    return value if value.isalnum() and len(value) == 16 else None
+
+
 def keychain_service_for(data_dir: Path) -> str:
     """Name the Keychain item after the data it points into.
 
@@ -145,16 +168,48 @@ def keychain_service_for(data_dir: Path) -> str:
     three backends — the E2E suite, `pnpm dev`, and a real install — read and
     write one another's pointer: running the E2E suite signed the developer
     out, because the id it left behind named a profile that existed only in
-    the E2E database. Scoping by directory matches what `configure_database`
-    already does with the database itself.
+    the E2E database.
 
-    The path is hashed rather than embedded: a data directory is an absolute
-    path that may contain spaces, `/`, and the user's name, none of which
-    belong in an identifier that appears in `security` output.
+    Each data folder therefore names its own item — by the identity it
+    carries, not by its path, so moving the folder keeps the learner signed
+    in. A folder without one yet is named by its hashed path, as before.
     """
 
-    digest = hashlib.sha256(str(data_dir.resolve()).encode("utf-8")).hexdigest()
-    return f"{KEYCHAIN_SERVICE}.{digest[:16]}"
+    identity = data_identity(data_dir)
+    if identity is not None:
+        return f"{KEYCHAIN_SERVICE}.{identity}"
+    return _legacy_service_for(data_dir)
+
+
+def ensure_data_identity(data_dir: Path, store_for: "Callable[[str], SecretStore] | None" = None) -> str:
+    """Give the data folder an identity, carrying over a pointer stored under its path.
+
+    Called once the folder is known to be usable. A folder that already has
+    an identity is left alone. `store_for` builds a store for a service name;
+    on macOS that is the Keychain, and elsewhere there is nothing to carry.
+    """
+
+    existing = data_identity(data_dir)
+    if existing is not None:
+        return existing
+    identity = secrets.token_hex(8)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / DATA_IDENTITY_FILE).write_text(identity + "\n")
+    if store_for is None and sys.platform == "darwin":
+        store_for = lambda service: KeychainSecretStore(service=service)  # noqa: E731
+    if store_for is not None:
+        legacy = store_for(_legacy_service_for(data_dir))
+        current = store_for(f"{KEYCHAIN_SERVICE}.{identity}")
+        for key in _CARRIED_KEYS:
+            value = legacy.get(key)
+            if value is not None:
+                current.set(key, value)
+                legacy.delete(key)
+    return identity
+
+
+# Every key kept per data folder. Only the active-account pointer today.
+_CARRIED_KEYS = ("active-profile",)
 
 
 def get_secret_store() -> SecretStore:

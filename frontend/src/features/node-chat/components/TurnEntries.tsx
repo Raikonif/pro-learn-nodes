@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { MessageText } from '../../code-viewer'
 import { kindPhrase, PermissionRequestCard, usePermissionsStore } from '../../permissions'
 import { practiceToolLabel, revealDelivery, type DeliveredTool } from '../../practice'
 import { useAgentsStore } from '../../settings'
@@ -277,7 +278,7 @@ export function LiveTurnEntries({ turn, nodeId }: { turn: LiveTurn; nodeId: stri
                   </details>
                 ) : null}
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
-                  {entry.text}
+                  <MessageText text={entry.text} />
                   {running ? <span className="ml-1 animate-pulse text-gray-400">▍</span> : null}
                 </p>
                 {running ? null : <OutcomeBadge outcome={turn.outcome} />}

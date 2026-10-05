@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 
 import { GraphCanvas, GraphRail, RecentsRail } from '../features/graph-navigation'
-import { NodeConversation, ThreadList, placeInComposer, useAnyTurnRunning } from '../features/node-chat'
+import { NodeCenterTabs } from '../features/code-viewer'
+import { NodeConversation, ThreadList, placeInComposer, useAnyTurnRunning, useThreadTurnRunning } from '../features/node-chat'
 import { PermissionIndicator } from '../features/permissions'
-import { PracticeRail, useHasExpandedBlock } from '../features/practice'
+import { PracticeRail, useHasExpandedBlock, usePracticeCodeExercises } from '../features/practice'
 import { ProjectDialogHost } from '../features/projects'
 import { CommandPalette } from '../features/command-surface'
 import { DetailedStartHost, EmptyWorkspaceStart, QuickStartButton } from '../features/study-launcher'
@@ -20,7 +21,7 @@ import { useWorkspaceStore } from '../shared/lib/workspace-store'
 
 import { AccountAffordance } from '../features/account'
 import { MemoryButton, MemoryPanel } from '../features/memory'
-import { AgentSettingsButton, AgentSettingsPanel } from '../features/settings'
+import { AgentSettingsButton, AgentSettingsPanel, SettingsButton, SettingsPanel } from '../features/settings'
 
 import BackendStatus from './BackendStatus'
 
@@ -132,6 +133,9 @@ function Workspace() {
   const hydrate = useWorkspaceStore((s) => s.hydrate)
   const openNodeId = useWorkspaceStore((s) => s.openNodeId)
   const isNodeOpen = openNodeId !== null
+  const openThreadId = useWorkspaceStore((s) => s.openThreadId)
+  const openThreadRunning = useThreadTurnRunning(openThreadId)
+  const openNodeExercises = usePracticeCodeExercises(openNodeId)
   // An account with no sessions gets both ways to begin instead of a graph
   // with nothing on it.
   const hasNoSessions = useWorkspaceStore((s) => s.graph.nodes.length === 0)
@@ -173,6 +177,7 @@ function Workspace() {
           {isReady && <PermissionIndicator watching={turnRunning} />}
           <AgentSettingsButton />
           <MemoryButton />
+          <SettingsButton />
           <AccountAffordance />
           <BackendStatus />
           {isReady && <RailToggle side="right" />}
@@ -238,10 +243,16 @@ function Workspace() {
           className="flex min-w-0 flex-1 flex-col overflow-hidden"
         >
           {isNodeOpen ? (
-            <>
-              <ThreadList />
-              <NodeConversation />
-            </>
+            <NodeCenterTabs
+              turnRunning={openThreadRunning}
+              exercises={openNodeExercises}
+              conversation={
+                <>
+                  <ThreadList />
+                  <NodeConversation />
+                </>
+              }
+            />
           ) : hasNoSessions ? (
             <EmptyWorkspaceStart />
           ) : (
@@ -292,6 +303,7 @@ function Workspace() {
 
       <AgentSettingsPanel />
       <MemoryPanel />
+      <SettingsPanel />
       {/* The palette's "Start with a topic…" opens the one dialog from here. */}
       <DetailedStartHost />
       {/* The project dialogs (new, rename, instructions, delete) open from the

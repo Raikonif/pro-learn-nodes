@@ -19,7 +19,7 @@ from api.dependencies.auth import ActiveProfile, WorkspaceScope
 from api.dependencies.runtime import RuntimeDep
 from core.exceptions import NotFoundError, ValidationError
 from core.runtime import RuntimeState
-from service import projects, retrieval, workspace
+from service import code_files, projects, retrieval, workspace
 from service.agent import registry as agent_registry
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -237,6 +237,27 @@ async def archive_node(node_id: str, _runtime: RuntimeDep, workspace_id: Workspa
 async def restore_node(node_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope) -> dict[str, Any]:
     try:
         return workspace.restore_node(workspace_id, node_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+# The Code tab: read-only, and only within the node's own working directory.
+@router.get("/nodes/{node_id}/code")
+async def list_code(node_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope) -> dict[str, Any]:
+    try:
+        return code_files.list_files(workspace_id, node_id)
+    except Exception as error:
+        raise _domain_error(error)
+
+
+@router.get("/nodes/{node_id}/code/file")
+async def read_code(
+    node_id: str, _runtime: RuntimeDep, workspace_id: WorkspaceScope, path: str = Query(min_length=1)
+) -> dict[str, Any]:
+    try:
+        return code_files.read_file(workspace_id, node_id, path)
+    except code_files.NotViewable as error:
+        raise HTTPException(status_code=422, detail={"reason": error.reason})
     except Exception as error:
         raise _domain_error(error)
 

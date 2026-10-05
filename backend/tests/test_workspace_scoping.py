@@ -285,4 +285,4 @@ async def test_every_workspace_route_refuses_while_signed_out(
 def test_the_signed_out_test_covers_the_whole_router():
     """A guard on the guard: an empty enumeration would pass silently."""
 
-    assert len(_workspace_requests()) == len(workspace_router.routes) == 24
+    assert len(_workspace_requests()) == len(workspace_router.routes) == 26

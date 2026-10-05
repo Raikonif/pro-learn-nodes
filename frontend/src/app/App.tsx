@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
 
 import { SignInSurface, useAccountStore } from '../features/account'
+import { discardCodeViewerState } from '../features/code-viewer'
 import { discardMemoryState } from '../features/memory'
 import { discardPracticeState } from '../features/practice'
-import { useAgentsStore } from '../features/settings'
+import { DataStartupGate, useAgentsStore } from '../features/settings'
 import { useWorkspaceStore } from '../shared/lib/workspace-store'
 
 import Workspace from './Workspace'
@@ -14,7 +15,7 @@ import Workspace from './Workspace'
  * lands when there is a second full-window surface to route to (the study
  * launcher, Phase 13).
  */
-function App() {
+function AppContent() {
   const hydrate = useWorkspaceStore((state) => state.hydrate)
   const discardHydratedState = useWorkspaceStore((state) => state.discardHydratedState)
   const workspaceId = useWorkspaceStore((state) => state.workspaceId)
@@ -45,6 +46,7 @@ function App() {
       discardHydratedState()
       useAgentsStore.getState().discard()
       discardPracticeState()
+      discardCodeViewerState()
       discardMemoryState()
     }
   }, [activeProfile, discardHydratedState])
@@ -75,6 +77,19 @@ function App() {
   // The affordance lives in the workspace header, not here: it is chrome, and
   // pairing it with `Workspace` as a sibling is what forced it to be an overlay.
   return <Workspace />
+}
+
+/**
+ * The desktop shell's start comes first: a data folder that is missing or
+ * damaged, with nothing to restore, has to be resolved before anything that
+ * needs the backend can work.
+ */
+function App() {
+  return (
+    <DataStartupGate>
+      <AppContent />
+    </DataStartupGate>
+  )
 }
 
 export default App

@@ -67,6 +67,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LEARN_NODES_DATA_DIR"),
     )
 
+    # Set by the desktop shell when the data folder is one the learner chose
+    # or moved to: a folder that is then missing — an unplugged drive — is
+    # reported, never created afresh as an empty graph (`data-location`).
+    require_existing_data: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("LEARN_NODES_REQUIRE_EXISTING_DATA"),
+    )
+
     # Alias-only (hence no `populate_by_name`): a stray `PORT` in the
     # environment — CI runners and process managers set one freely — must
     # not silently move the port the frontend proxy was told to target.

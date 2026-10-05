@@ -1,4 +1,4 @@
-import { useAgentsStore } from '../settings'
+import { useAgentsStore, useSettingsPanelStore } from '../settings'
 import { useMemoryStore } from '../memory'
 import { openDetailedStart } from '../study-launcher'
 import { usePaneLayout } from '../../shared/lib/pane-layout'
@@ -16,6 +16,7 @@ export function useWorkspaceCommands(): Command[] {
   const rightCollapsed = usePaneLayout((s) => s.right.collapsed)
   const openAgents = useAgentsStore((s) => s.openPanel)
   const openMemory = useMemoryStore((s) => s.openPanel)
+  const openSettings = useSettingsPanelStore((s) => s.openPanel)
 
   return [
     {
@@ -68,6 +69,14 @@ export function useWorkspaceCommands(): Command[] {
       description: 'What Learn Nodes remembers about you',
       keywords: ['remember', 'memories'],
       run: openMemory,
+    },
+    {
+      id: 'workspace.settings',
+      title: 'Settings',
+      group: WORKSPACE_GROUP,
+      description: 'Where Learn Nodes keeps your data',
+      keywords: ['preferences', 'data', 'location', 'folder', 'storage', 'move'],
+      run: openSettings,
     },
   ]
 }

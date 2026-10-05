@@ -487,6 +487,11 @@ export function liveMessageIds(turn: LiveTurn | undefined): Set<string> {
 }
 
 /** Whether any conversation has a turn in progress — when an agent may ask. */
+/** Whether a turn is running in this thread. */
+export function useThreadTurnRunning(threadId: string | null): boolean {
+  return useTurnStore((s) => (threadId ? s.turns[threadId]?.phase === 'running' : false))
+}
+
 export function useAnyTurnRunning(): boolean {
   return useTurnStore((s) => Object.values(s.turns).some((turn) => turn.phase === 'running'))
 }

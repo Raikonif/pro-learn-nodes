@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { CodeView, MessageText } from '../../code-viewer'
 import type { PracticeAttempt, PracticeItem, RunOutcomeKind } from '../practice-api'
 import { bufferKey, usePracticeStore } from '../practice-store'
 import { SandboxTool, type RunResult } from '../sandbox'
@@ -68,7 +69,9 @@ function ExercisePanel({ nodeId, itemId }: { nodeId: string; itemId: string }) {
         className={`flex flex-col gap-1 p-2 text-xs ${cardClass(highlighted)}`}
       >
         <AuthorMark author={item.authoredBy} />
-        <p className="whitespace-pre-wrap break-words text-gray-900">{item.prompt}</p>
+        <p className="whitespace-pre-wrap break-words text-gray-900">
+          <MessageText text={item.prompt} />
+        </p>
         {item.expectedOutput !== null && (
           <div data-testid="expected-output" className="flex flex-col gap-1">
             <p className="text-gray-500">Expected output</p>
@@ -136,6 +139,12 @@ function LatestSubmission({ item, attempts }: { item: PracticeItem; attempts: Pr
       className="flex flex-col gap-1 rounded border border-gray-200 p-2 text-xs"
     >
       <p className="text-gray-500">Your latest submission · {attemptCountLabel(attempts.length)}</p>
+      {latest.response ? (
+        <div data-testid="submitted-code">
+          <p className="mb-0.5 text-gray-500">Submitted code</p>
+          <CodeView code={latest.response} language="python" label="Submitted code" compact />
+        </div>
+      ) : null}
       {latest.runOutcome !== null && <p className="text-gray-800">{OUTCOME_TEXT[latest.runOutcome]}</p>}
       {latest.runOutput ? (
         <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-1 font-mono text-gray-800">

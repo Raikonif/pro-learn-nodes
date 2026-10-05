@@ -350,6 +350,17 @@ class FakeAgent:
             chunks = ["solution: " + (solutions[0].read_text() if solutions else "none")]
         elif last_line.startswith("mcp:"):
             chunks = [self.call_mcp_tool(session_id, last_line)]
+        elif last_line == "write-code":
+            # Writes code into its working directory, one file with a syntax
+            # error, and quotes a fenced block — the Code tab's three cases.
+            cwd = Path(session["cwd"])
+            (cwd / "loops.py").write_text(
+                "class Counter:\n    def count(self, n):\n        # up to n\n        return [i for i in range(n)]\n"
+            )
+            (cwd / "broken.py").write_text("def broken(:\n    return 1\n")
+            chunks = ["I wrote loops.py. The key part:\n", "```python\nfor i in range(3):\n    print(i)\n```\n", "Done."]
+        elif last_line == "slow-story":
+            chunks = [f"part {i} " for i in range(8)]
         elif text == "recall":
             chunks = ["previously: " + " | ".join(session["history"])]
         else:
@@ -361,8 +372,8 @@ class FakeAgent:
             if options.crash_mid_turn and index == max(1, len(chunks) // 2):
                 os._exit(3)
             self.update(session_id, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": chunk}})
-            if options.delay:
-                cancelled.wait(options.delay)
+            if options.delay or last_line == "slow-story":
+                cancelled.wait(options.delay or 0.5)
         if options.crash_mid_turn:
             os._exit(3)
 

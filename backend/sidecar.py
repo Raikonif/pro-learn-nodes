@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     # Matches the documented dev default. Production uses `--uds` and ignores
     # this entirely; it only applies when the sidecar is run over TCP by hand.
     parser.add_argument("--port", type=int, default=8009)
+    parser.add_argument(
+        "--require-existing",
+        action="store_true",
+        help="Report a missing data directory instead of creating it",
+    )
     return parser
 
 
@@ -36,6 +41,8 @@ def main() -> None:
     # accidentally follows the sidecar's transient working directory.
     if args.data_dir is not None:
         os.environ["LEARN_NODES_DATA_DIR"] = str(args.data_dir)
+    if args.require_existing:
+        os.environ["LEARN_NODES_REQUIRE_EXISTING_DATA"] = "1"
 
     from main import app
 
@@ -49,6 +56,11 @@ def main() -> None:
         port=args.port,
         uds=str(args.uds) if args.uds is not None else None,
         log_level="info",
+        # Bounded: by default uvicorn waits for every open connection — a
+        # streaming turn, a proxy's keep-alive — before exiting, so a stop
+        # could take forever. The desktop shell waits for the exit before it
+        # copies or restores the data folder (`data-location`).
+        timeout_graceful_shutdown=5,
     )
 
 

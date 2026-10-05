@@ -6,6 +6,7 @@ import {
   threadsAnchoredTo,
 } from '../../../shared/lib/fixtures'
 import { useWorkspaceStore } from '../../../shared/lib/workspace-store'
+import { MessageText, OpenInCodeActions } from '../../code-viewer'
 import { SessionProject } from '../../projects'
 import { isMainThread, type ChatMessage } from '../../../shared/lib/workspace-types'
 import { readDelivery, readNotDelivered } from '../delivery'
@@ -266,8 +267,11 @@ function RecordedMessage({
           highlighted ? 'bg-yellow-100' : ''
         }`}
       >
-        {message.content}
+        {message.role === 'agent' ? <MessageText text={message.content} /> : message.content}
       </p>
+      {message.role === 'agent' ? (
+        <OpenInCodeActions nodeId={nodeId} messageId={message.id} text={message.content} />
+      ) : null}
       <OutcomeBadge outcome={message.outcome} />
       {stubs.length > 0 ? (
         <ul className="flex flex-col items-start">

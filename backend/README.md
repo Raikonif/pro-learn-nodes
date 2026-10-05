@@ -18,9 +18,20 @@ socket argument. Build the architecture-specific executable from this
 directory before running `tauri build`:
 
 ```bash
-uv sync --extra build
+uv sync --extra build --extra test
 uv run pyinstaller --clean --noconfirm learn-nodes-backend.spec
-cp dist/learn-nodes-backend ../src-tauri/binaries/learn-nodes-backend-$(rustc -vV | awk '/host:/ {print $2}')
+target=../src-tauri/binaries/learn-nodes-backend-$(rustc -vV | awk '/host:/ {print $2}')
+rm -f "$target" && cp dist/learn-nodes-backend "$target"
+```
+
+`--extra test` keeps the test tools installed: `uv sync` removes every extra
+it is not given. `rm` before `cp` gives the binary a new file: overwriting a
+signed executable that macOS has already run keeps its cached signature, and
+the new one is killed at launch (exit 137) with no message.
+
+```bash
+# The data-location move and restore against the real binary:
+cd ../src-tauri && LEARN_NODES_SIDECAR_BIN=binaries/learn-nodes-backend-<triple> cargo test -- --ignored real_sidecar
 ```
 
 The sidecar accepts `--uds <path>` for production and `--host`/`--port` for

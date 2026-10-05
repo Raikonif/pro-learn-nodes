@@ -15,13 +15,19 @@
 // In dev the same command targets the externally-managed uvicorn on the
 // loopback HTTP port, so the frontend stays transport-agnostic.
 
+mod data_location;
+#[cfg(test)]
+mod data_location_real;
+
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
+
+use data_location::{Backend, DataStatus, Mover, PointerStore, StartOutcome, Starter};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,9 +39,12 @@ const SIDECAR_NAME: &str = "learn-nodes-backend";
 // that reaches one of them reports its answer as this backend's.
 const HTTP_FALLBACK_URL: &str = "http://127.0.0.1:8009";
 /// Filename of the Unix domain socket the production sidecar listens on.
-/// Lives in the per-user app data directory so it is cleaned up with the
-/// app and never collides across users.
+/// Lives in the per-user app cache directory, not the data folder: a socket
+/// path is limited to about 104 bytes, and a learner-chosen data folder can
+/// be deeper than that.
 const UNIX_SOCKET_FILENAME: &str = "backend.sock";
+/// How long a starting sidecar may take to report its data, migrations included.
+const READINESS_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct BackendState {
     /// When `Some`, dispatch every `api_request` call over this Unix
@@ -45,6 +54,16 @@ struct BackendState {
     /// Retaining the handle lets the Tauri host terminate the supervised
     /// process when the main window closes or the application exits.
     child: Mutex<Option<CommandChild>>,
+    /// Where the data is, how the last start went, and whether a move runs.
+    data: Mutex<DataState>,
+}
+
+#[derive(Default)]
+struct DataState {
+    /// `None` in development, where the backend is run outside the shell.
+    location: Option<PathBuf>,
+    startup: Option<StartOutcome>,
+    moving: bool,
 }
 
 #[derive(Default, Deserialize)]
@@ -263,21 +282,55 @@ fn take_utf8_prefix(pending: &mut Vec<u8>) -> Option<String> {
     Some(text)
 }
 
-async fn wait_for_readiness(socket_path: &Path) -> Result<(), String> {
-    for _ in 0..50 {
-        if forward_over_unix_socket(socket_path, "GET", "/ready", None)
-            .await
-            .is_ok()
-        {
-            return Ok(());
+/// Poll `/ready` until the sidecar reports its data: usable, missing, or
+/// damaged. "pending" and a socket not yet listening mean keep waiting.
+async fn wait_for_data_status(socket_path: &Path, timeout: Duration) -> DataStatus {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last = String::from("no answer yet");
+    while tokio::time::Instant::now() < deadline {
+        match forward_over_unix_socket(socket_path, "GET", "/ready", None).await {
+            Ok(body) => return ready_status(&body),
+            Err(error) => {
+                if let Some(status) = refusal_status(&error) {
+                    return status;
+                }
+                last = error;
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-
-    Err(format!(
-        "sidecar did not become ready on unix://{} within 5 seconds",
-        socket_path.display()
+    DataStatus::Unreachable(format!(
+        "the backend did not report ready on unix://{} within {}s ({last})",
+        socket_path.display(),
+        timeout.as_secs()
     ))
+}
+
+/// A 200 from `/ready`. A sidecar that predates the data report is usable.
+fn ready_status(body: &serde_json::Value) -> DataStatus {
+    match body.pointer("/data/status").and_then(|s| s.as_str()) {
+        None | Some("ok") => DataStatus::Ok,
+        Some(other) => DataStatus::Damaged(format!("the backend reported {other}")),
+    }
+}
+
+/// A 503 from `/ready` that names the data's state; `None` for "pending" or
+/// anything that is not such an answer.
+fn refusal_status(error: &str) -> Option<DataStatus> {
+    let body = error.strip_prefix("backend returned HTTP 503: ")?;
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let data = value.pointer("/detail/data")?;
+    let detail = data
+        .get("detail")
+        .and_then(|d| d.as_str())
+        .or_else(|| value.pointer("/detail/message").and_then(|m| m.as_str()))
+        .unwrap_or("")
+        .to_string();
+    match data.get("status")?.as_str()? {
+        "missing" => Some(DataStatus::Missing(detail)),
+        "damaged" => Some(DataStatus::Damaged(detail)),
+        _ => None,
+    }
 }
 
 async fn write_http_request<W>(
@@ -388,21 +441,26 @@ fn split_host_port(host_port: &str) -> Result<(String, u16), String> {
     }
 }
 
+/// Spawn the sidecar on `data_dir`. The data folder is never created here:
+/// for the default folder the sidecar creates it, and for a chosen one
+/// `--require-existing` forbids it.
 fn spawn_production_sidecar<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
+    data_dir: &Path,
+    require_existing: bool,
 ) -> Result<(PathBuf, CommandChild), String> {
-    let app_data = handle
+    let cache = handle
         .path()
-        .app_data_dir()
-        .map_err(|e| format!("app data dir: {e}"))?;
-    std::fs::create_dir_all(&app_data)
-        .map_err(|e| format!("create app data dir {}: {e}", app_data.display()))?;
-    let socket_path = app_data.join(UNIX_SOCKET_FILENAME);
+        .app_cache_dir()
+        .map_err(|e| format!("app cache dir: {e}"))?;
+    std::fs::create_dir_all(&cache)
+        .map_err(|e| format!("create app cache dir {}: {e}", cache.display()))?;
+    let socket_path = cache.join(UNIX_SOCKET_FILENAME);
     // Drop a stale socket file from a previous run; uvicorn refuses to bind
     // to an existing path.
     let _ = std::fs::remove_file(&socket_path);
 
-    let arguments = sidecar_arguments(&socket_path, &app_data)?;
+    let arguments = sidecar_arguments(&socket_path, data_dir, require_existing)?;
 
     let sidecar = handle
         .shell()
@@ -414,19 +472,252 @@ fn spawn_production_sidecar<R: tauri::Runtime>(
     Ok((socket_path, child))
 }
 
-fn sidecar_arguments(socket_path: &Path, app_data: &Path) -> Result<Vec<String>, String> {
+fn sidecar_arguments(
+    socket_path: &Path,
+    app_data: &Path,
+    require_existing: bool,
+) -> Result<Vec<String>, String> {
     let socket_arg = socket_path
         .to_str()
         .ok_or_else(|| format!("non-utf8 socket path {}", socket_path.display()))?;
     let data_arg = app_data
         .to_str()
         .ok_or_else(|| format!("non-utf8 app data path {}", app_data.display()))?;
-    Ok(vec![
+    let mut arguments = vec![
         "--uds".to_string(),
         socket_arg.to_string(),
         "--data-dir".to_string(),
         data_arg.to_string(),
-    ])
+    ];
+    if require_existing {
+        arguments.push("--require-existing".to_string());
+    }
+    Ok(arguments)
+}
+
+/// The real backend for moving and restoring: the supervised sidecar.
+struct SidecarBackend<R: tauri::Runtime> {
+    handle: tauri::AppHandle<R>,
+}
+
+impl<R: tauri::Runtime> Backend for SidecarBackend<R> {
+    fn stop(&mut self) {
+        cleanup_backend(&self.handle.state::<BackendState>());
+    }
+
+    fn start(&mut self, dir: &Path, require_existing: bool) -> DataStatus {
+        let state = self.handle.state::<BackendState>();
+        cleanup_backend(&state);
+        let (socket, child) = match spawn_production_sidecar(&self.handle, dir, require_existing) {
+            Ok(spawned) => spawned,
+            Err(error) => return DataStatus::Unreachable(error),
+        };
+        let status = tauri::async_runtime::block_on(wait_for_data_status(&socket, READINESS_TIMEOUT));
+        if status.is_ok() {
+            log::info!("[learn-nodes] sidecar ready on unix://{} for {}", socket.display(), dir.display());
+            if let Ok(mut slot) = state.unix_socket.lock() {
+                *slot = Some(socket);
+            }
+            if let Ok(mut slot) = state.child.lock() {
+                *slot = Some(child);
+            }
+        } else {
+            log::error!("[learn-nodes] data at {} is not usable: {}", dir.display(), status.describe());
+            stop_sidecar(child);
+            let _ = std::fs::remove_file(&socket);
+        }
+        status
+    }
+}
+
+/// Where the pointer lives and the default data folder, for this install.
+fn locations<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Result<(PathBuf, PathBuf), String> {
+    let config = handle.path().app_config_dir().map_err(|e| format!("app config dir: {e}"))?;
+    let default = handle.path().app_data_dir().map_err(|e| format!("app data dir: {e}"))?;
+    Ok((config, default))
+}
+
+fn aside_suffix() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    seconds.to_string()
+}
+
+/// Finish or undo an interrupted move, then start on the configured folder,
+/// restoring from a good copy if its data is not usable.
+fn start_backend<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, mut notices: Vec<String>) -> StartOutcome {
+    let (config, default) = match locations(handle) {
+        Ok(found) => found,
+        Err(error) => {
+            return StartOutcome::Failed { path: PathBuf::new(), problem: DataStatus::Unreachable(error), notices }
+        }
+    };
+    let store = PointerStore::new(&config);
+    if let Some(line) = (Mover { store: &store, default_dir: &default }).resume() {
+        notices.push(line);
+    }
+    let mut backend = SidecarBackend { handle: handle.clone() };
+    let outcome = Starter { store: &store, default_dir: &default, aside_suffix: aside_suffix() }.start(&mut backend, notices);
+    let state = handle.state::<BackendState>();
+    if let Ok(mut data) = state.data.lock() {
+        data.location = Some(match &outcome {
+            StartOutcome::Ready { path, .. } | StartOutcome::Failed { path, .. } => path.clone(),
+        });
+        data.startup = Some(outcome.clone());
+    }
+    outcome
+}
+
+// --- Data location commands -------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DataLocationInfo {
+    available: bool,
+    unavailable_reason: Option<String>,
+    path: Option<PathBuf>,
+    is_default: bool,
+    contents: Option<data_location::Contents>,
+    startup: Option<StartOutcome>,
+    leftovers: Vec<String>,
+    previous: Option<PathBuf>,
+    moving: bool,
+}
+
+#[tauri::command]
+fn data_location_info(app: tauri::AppHandle, state: State<'_, BackendState>) -> Result<DataLocationInfo, String> {
+    let data = state.data.lock().map_err(|_| "data state is poisoned".to_string())?;
+    let Some(path) = data.location.clone() else {
+        return Ok(DataLocationInfo {
+            available: false,
+            unavailable_reason: Some("The development build runs its backend outside the app, so where its data is kept is chosen there.".into()),
+            path: None,
+            is_default: true,
+            contents: None,
+            startup: None,
+            leftovers: vec![],
+            previous: None,
+            moving: false,
+        });
+    };
+    let (config, default) = locations(&app)?;
+    let pointer = PointerStore::new(&config).load().unwrap_or_default();
+    let leftovers = pointer
+        .move_record
+        .as_ref()
+        .filter(|record| record.state == data_location::MoveState::Done)
+        .map(|record| record.leftovers.clone())
+        .unwrap_or_default();
+    Ok(DataLocationInfo {
+        available: true,
+        unavailable_reason: None,
+        is_default: path == default,
+        contents: Some(data_location::summarize(&path)),
+        path: Some(path),
+        startup: data.startup.clone(),
+        leftovers,
+        previous: pointer.move_record.filter(|r| !r.leftovers.is_empty()).map(|r| r.from),
+        moving: data.moving,
+    })
+}
+
+#[tauri::command]
+fn data_location_check(app: tauri::AppHandle, state: State<'_, BackendState>, target: String) -> Result<data_location::TargetCheck, String> {
+    let current = state
+        .data
+        .lock()
+        .map_err(|_| "data state is poisoned".to_string())?
+        .location
+        .clone()
+        .ok_or("Not available in the development build.")?;
+    let _ = app;
+    Ok(data_location::check_target(&current, Path::new(&target)))
+}
+
+#[tauri::command]
+async fn data_location_move(app: tauri::AppHandle, target: String) -> Result<data_location::MoveOutcome, String> {
+    {
+        let state = app.state::<BackendState>();
+        let mut data = state.data.lock().map_err(|_| "data state is poisoned".to_string())?;
+        if data.location.is_none() {
+            return Err("Not available in the development build.".into());
+        }
+        if data.moving {
+            return Err("A move is already running.".into());
+        }
+        data.moving = true;
+    }
+    let handle = app.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let (config, default) = locations(&handle)?;
+        let store = PointerStore::new(&config);
+        let mut backend = SidecarBackend { handle: handle.clone() };
+        let emitter = handle.clone();
+        let outcome = Mover { store: &store, default_dir: &default }.run(&mut backend, Path::new(&target), &mut |progress| {
+            let _ = emitter.emit("data-location-progress", progress);
+        });
+        Ok::<_, String>(outcome)
+    })
+    .await
+    .map_err(|e| format!("move task: {e}"))?;
+    let state = app.state::<BackendState>();
+    if let Ok(mut data) = state.data.lock() {
+        data.moving = false;
+        if let Ok(data_location::MoveOutcome::Completed { path, .. }) = &outcome {
+            data.location = Some(path.clone());
+            data.startup = None;
+        }
+    }
+    outcome
+}
+
+#[tauri::command]
+async fn data_location_retry_removal(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (config, default) = locations(&app)?;
+        Mover { store: &PointerStore::new(&config), default_dir: &default }.retry_removal()
+    })
+    .await
+    .map_err(|e| format!("removal task: {e}"))?
+}
+
+#[tauri::command]
+fn data_location_reveal(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(target_os = "macos"))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(&path).spawn().map(|_| ()).map_err(|e| format!("reveal {path}: {e}"))
+}
+
+#[tauri::command]
+fn data_location_dismiss(state: State<'_, BackendState>) -> Result<(), String> {
+    let mut data = state.data.lock().map_err(|_| "data state is poisoned".to_string())?;
+    if let Some(StartOutcome::Ready { notices, .. }) = data.startup.as_mut() {
+        notices.clear();
+    }
+    Ok(())
+}
+
+/// After a failed start: try again, point at another folder, or use the default.
+#[tauri::command]
+async fn data_startup_recover(app: tauri::AppHandle, action: String, folder: Option<String>) -> Result<StartOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (config, default) = locations(&app)?;
+        let store = PointerStore::new(&config);
+        let starter = Starter { store: &store, default_dir: &default, aside_suffix: aside_suffix() };
+        match action.as_str() {
+            "retry" => {}
+            "folder" => starter.use_folder(Path::new(folder.as_deref().ok_or("No folder chosen.")?))?,
+            "default" => starter.use_default()?,
+            other => return Err(format!("unknown recovery action {other:?}")),
+        }
+        Ok(start_backend(&app, vec![]))
+    })
+    .await
+    .map_err(|e| format!("recovery task: {e}"))?
 }
 
 fn cleanup_backend(state: &BackendState) {
@@ -454,6 +745,28 @@ fn cleanup_backend(state: &BackendState) {
     }
 }
 
+const SIDECAR_STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Whether `pid` has exited within `timeout`. `waitpid` both notices an exit
+/// and reaps it, so an exited process that nobody collected (a zombie, which
+/// `kill(pid, 0)` still reports alive) counts as gone; ECHILD means another
+/// waiter already collected it.
+#[cfg(unix)]
+fn wait_for_exit(pid: libc::pid_t, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let mut status = 0;
+        let reaped = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if reaped == pid || (reaped == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD)) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn stop_sidecar(child: CommandChild) {
     #[cfg(unix)]
     {
@@ -464,6 +777,23 @@ fn stop_sidecar(child: CommandChild) {
         let pid = child.pid() as libc::pid_t;
         let result = unsafe { libc::kill(pid, libc::SIGTERM) };
         if result == 0 {
+            // Wait for it to be gone: a move copies, and a restore replaces,
+            // the database this process has open. The bootloader exits only
+            // after its Python child does, and the sidecar bounds its own
+            // graceful shutdown, so this is normally a few seconds at most.
+            if wait_for_exit(pid, SIDECAR_STOP_TIMEOUT) {
+                return;
+            }
+            log::warn!("[learn-nodes] sidecar pid {pid} did not exit within {}s; killing it", SIDECAR_STOP_TIMEOUT.as_secs());
+            // The Python child first: killing only the bootloader would leave
+            // it running, with the database open, while a move copies it.
+            let _ = std::process::Command::new("/usr/bin/pkill")
+                .args(["-KILL", "-P", &pid.to_string()])
+                .status();
+            if let Err(err) = child.kill() {
+                log::warn!("[learn-nodes] failed to kill sidecar: {err}");
+            }
+            wait_for_exit(pid, std::time::Duration::from_secs(2));
             return;
         }
 
@@ -482,46 +812,44 @@ fn stop_sidecar(child: CommandChild) {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::default().build())
         .setup(|app| {
-            let (unix_socket, child) = if cfg!(debug_assertions) {
-                (None, None)
-            } else {
-                match spawn_production_sidecar(&app.handle()) {
-                    Ok((path, child)) => {
-                        match tauri::async_runtime::block_on(wait_for_readiness(&path)) {
-                            Ok(()) => {
-                                log::info!(
-                                    "[learn-nodes] sidecar spawned and ready on unix://{}",
-                                    path.display()
-                                );
-                                (Some(path), Some(child))
-                            }
-                            Err(err) => {
-                                log::error!("[learn-nodes] {err}");
-                                stop_sidecar(child);
-                                let _ = std::fs::remove_file(&path);
-                                (None, None)
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "[learn-nodes] failed to spawn sidecar ({err}); api_request will fall back to HTTP {HTTP_FALLBACK_URL}"
-                        );
-                        (None, None)
-                    }
-                }
-            };
-
             app.manage(BackendState {
-                unix_socket: Mutex::new(unix_socket),
-                child: Mutex::new(child),
+                unix_socket: Mutex::new(None),
+                child: Mutex::new(None),
+                data: Mutex::new(DataState::default()),
             });
-
+            // In development the backend runs outside the shell; in a release
+            // build the sidecar is started on the configured data folder, and
+            // a folder whose data is not usable is restored or reported. A
+            // failed start leaves `api_request` on its HTTP fallback and the
+            // window shows the recovery screen.
+            if !cfg!(debug_assertions) {
+                match start_backend(&app.handle(), vec![]) {
+                    StartOutcome::Ready { path, .. } => {
+                        log::info!("[learn-nodes] data at {}", path.display())
+                    }
+                    StartOutcome::Failed { path, problem, .. } => log::error!(
+                        "[learn-nodes] could not start on {}: {}",
+                        path.display(),
+                        problem.describe()
+                    ),
+                }
+            }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![api_request, api_stream])
+        .invoke_handler(tauri::generate_handler![
+            api_request,
+            api_stream,
+            data_location_info,
+            data_location_check,
+            data_location_move,
+            data_location_retry_removal,
+            data_location_reveal,
+            data_location_dismiss,
+            data_startup_recover
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -545,9 +873,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cleanup_backend, extract_json_body, is_backend_answer, sidecar_arguments, stream_response,
-        take_utf8_prefix, BackendState,
+        cleanup_backend, extract_json_body, is_backend_answer, ready_status, refusal_status,
+        sidecar_arguments, stream_response, take_utf8_prefix, BackendState, DataState,
     };
+    use crate::data_location::DataStatus;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -557,6 +886,7 @@ mod tests {
         let arguments = sidecar_arguments(
             Path::new("/tmp/learn-nodes/backend.sock"),
             Path::new("/tmp/learn-nodes"),
+            false,
         )
         .expect("utf-8 paths");
         assert_eq!(
@@ -590,6 +920,7 @@ mod tests {
         let state = BackendState {
             unix_socket: Mutex::new(Some(path.clone())),
             child: Mutex::new(None),
+            data: Mutex::new(DataState::default()),
         };
 
         cleanup_backend(&state);
@@ -694,5 +1025,25 @@ mod tests {
         let value = extract_json_body("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{\"a\":1}")
             .expect("json");
         assert_eq!(value["a"], 1);
+    }
+
+    #[test]
+    fn a_chosen_folder_is_passed_as_required_to_exist() {
+        let arguments = sidecar_arguments(Path::new("/c/backend.sock"), Path::new("/Volumes/D/learn"), true).unwrap();
+        assert_eq!(arguments.last().map(String::as_str), Some("--require-existing"));
+    }
+
+    #[test]
+    fn readiness_reads_the_data_status() {
+        let ok = serde_json::json!({"status": "ready", "backend": "fastapi", "data": {"status": "ok", "detail": null}});
+        assert_eq!(ready_status(&ok), DataStatus::Ok);
+        assert_eq!(ready_status(&serde_json::json!({"status": "ready"})), DataStatus::Ok);
+        let missing = r#"backend returned HTTP 503: {"detail":{"message":"no data","data":{"status":"missing","detail":"/Volumes/D/learn does not exist"}}}"#;
+        assert_eq!(refusal_status(missing), Some(DataStatus::Missing("/Volumes/D/learn does not exist".into())));
+        let damaged = r#"backend returned HTTP 503: {"detail":{"message":"quick_check failed","data":{"status":"damaged","detail":null}}}"#;
+        assert_eq!(refusal_status(damaged), Some(DataStatus::Damaged("quick_check failed".into())));
+        let pending = r#"backend returned HTTP 503: {"detail":{"message":"starting","data":{"status":"pending","detail":null}}}"#;
+        assert_eq!(refusal_status(pending), None);
+        assert_eq!(refusal_status("unix connect to /x: refused"), None);
     }
 }

@@ -28,9 +28,15 @@ class Health(BaseModel):
     backend: Literal["fastapi"]
 
 
+class DataHealth(BaseModel):
+    status: Literal["pending", "ok", "missing", "damaged"]
+    detail: str | None = None
+
+
 class Readiness(BaseModel):
     status: Literal["ready"]
     backend: Literal["fastapi"]
+    data: DataHealth
 
 
 def get_request_id() -> str:
@@ -59,7 +65,10 @@ async def health(_request_id: RequestIdDep) -> Health:
 @router.get("/ready")
 async def ready(request: Request, _request_id: RequestIdDep) -> Readiness:
     runtime = request.app.state.runtime
+    data = DataHealth(status=runtime.data.status.value, detail=runtime.data.detail)
     if not runtime.ready:
-        detail = runtime.error or "Local data initialization is still pending"
-        raise HTTPException(status_code=503, detail=detail)
-    return Readiness(status="ready", backend="fastapi")
+        # The desktop shell reads `data.status` to decide whether to keep
+        # waiting (`pending`) or restore from another copy (`missing`, `damaged`).
+        message = runtime.error or "Local data initialization is still pending"
+        raise HTTPException(status_code=503, detail={"message": message, "data": data.model_dump()})
+    return Readiness(status="ready", backend="fastapi", data=data)

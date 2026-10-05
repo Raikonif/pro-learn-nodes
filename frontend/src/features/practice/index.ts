@@ -3,7 +3,9 @@
 export { default as PracticeRail } from './components/PracticeRail'
 export { useHasExpandedBlock } from './workbench/use-workbench'
 
-import { usePracticeStore, type DeliveredTool } from './practice-store'
+import { useMemo } from 'react'
+
+import { bufferKey, usePracticeStore, type DeliveredTool } from './practice-store'
 import { blockForDelivery, type BlockKey } from './workbench/blocks'
 import { ADDABLE_KINDS, BLOCK_KINDS } from './workbench/kinds'
 
@@ -69,4 +71,26 @@ export const practiceAddCommands: PracticeAddCommand[] = ADDABLE_KINDS.flatMap((
  */
 export function openPracticeBlock(nodeId: string, block: BlockKey, options?: { author?: boolean }): void {
   usePracticeStore.getState().openBlock(nodeId, block, options)
+}
+
+/** A code exercise as another surface shows it: its statement, starter code, and the learner's current solution. */
+export type PracticeCodeExercise = { id: string; prompt: string; starterCode: string; solution: string }
+
+/**
+ * The node's code exercises, with the learner's current solution — the buffer
+ * as held here, or the starter code when none has been read or written. Only
+ * what practice has already loaded for the node; nothing is fetched here.
+ */
+export function usePracticeCodeExercises(nodeId: string | null): PracticeCodeExercise[] {
+  const material = usePracticeStore((s) => (nodeId ? s.material[nodeId] : undefined))
+  const buffers = usePracticeStore((s) => s.buffers)
+  return useMemo(() => {
+    if (!nodeId || material?.status !== 'ready') return []
+    return material.items
+      .filter((item) => item.kind === 'code_exercise')
+      .map((item) => {
+        const starterCode = item.starterCode ?? ''
+        return { id: item.id, prompt: item.prompt, starterCode, solution: buffers[bufferKey(nodeId, item.id)] ?? starterCode }
+      })
+  }, [nodeId, material, buffers])
 }
