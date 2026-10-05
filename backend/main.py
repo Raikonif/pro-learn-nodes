@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import agents, auth, chat, health, memory, practice, workspace
+from api.routes import agents, auth, chat, health, memory, permissions, practice, workspace
 from core.config import settings
 from core.runtime import RuntimeState, local_data_lifespan
 
@@ -54,6 +54,7 @@ def create_app(data_dir: Path | None = None, *, context_server: bool | None = No
     app.include_router(chat.router)
     app.include_router(practice.router)
     app.include_router(memory.router)
+    app.include_router(permissions.router)
     return app
 
 

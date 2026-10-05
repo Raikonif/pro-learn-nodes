@@ -214,7 +214,7 @@ describe('NodeConversation — a streaming turn', () => {
     const refused = screen.getByTestId('permission-refused')
     expect(refused).toHaveTextContent('The agent asked to: Edit notes.md')
     expect(refused).toHaveTextContent('refused')
-    expect(refused).toHaveTextContent(/later update/)
+    expect(refused).toHaveTextContent(/refused without asking/)
 
     expect(screen.getByTestId('continuity-seam')).toHaveTextContent('session could not be loaded')
 

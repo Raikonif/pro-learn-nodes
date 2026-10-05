@@ -13,8 +13,12 @@ Continuity, in order of preference:
    `loadSession` — load it once, then prompt.
 3. Otherwise open a fresh session and hand it the recorded transcript, and
    record a continuity seam so the conversation does not pretend the break
-   did not happen. That same primitive is what branching reuses in
-   `acp-agent-permissions-and-branching`.
+   did not happen.
+
+A permission request the agent makes mid-turn is decided here: without
+asking where the policy in `service/agent/permissions.py` allows, otherwise
+by the learner, through the registry this service shares with the decision
+route.
 """
 
 from __future__ import annotations
@@ -48,13 +52,16 @@ from service.workspace import note_message
 from service.context_server.credentials import Scope
 from service.context_server.orientation import ORIENTATION_NOTE
 from service.agent.controls import CONTROL_OF_CATEGORY, mode_group
+from service.agent.permissions import PendingPermission, PermissionRegistry, automatic_option
 from service.agent.contract import (
     ContextUsage,
     McpServer,
     Agent,
     AgentError,
     AgentNotAuthenticated,
+    PermissionAnswered,
     PermissionRefused,
+    PermissionRequest,
     PlanUpdate,
     SessionLoadFailed,
     TextChunk,
@@ -82,7 +89,7 @@ _NO_AGENT = "No agent is registered. Register one in Settings → Agents to star
 
 
 def node_directory(data_dir: Path, node_id: str) -> Path:
-    """The agent's working directory for one node — empty, and only this node's.
+    """The agent's working directory for one node — only this node's material.
 
     Beside the data store, never inside it, and never a parent of another
     node's: `agent-workspaces/<node_id>` under the local data dir.
@@ -229,6 +236,9 @@ class TurnService:
         # or None when it is not running — sessions then open without it.
         self._context = context
         self._active: dict[str, _ActiveTurn] = {}
+        # Permission requests waiting on the learner, answered from the stream's
+        # prompt or the workspace indicator through the decision route.
+        self.permissions = PermissionRegistry()
         # Sessions open in each live agent object. Keyed weakly so a crashed
         # agent the supervisor dropped takes its sessions with it — its
         # replacement has none open, and loads them again.
@@ -357,6 +367,35 @@ class TurnService:
                         "kind": event.kind,
                         "status": event.status,
                     }
+                elif isinstance(event, PermissionRequest):
+                    option = automatic_option(
+                        event, node_directory(self._data_dir, node_id), workspace_id, node_id, registration.id
+                    )
+                    if option is not None:
+                        # Decided by policy or a remembered decision: not asked, not recorded.
+                        event.decision.set_result(option)
+                        continue
+                    entry = self.permissions.register(
+                        PendingPermission(
+                            event, turn_id, workspace_id, node_id, thread_id,
+                            registration.id, registration.name, self._node_title(node_id),
+                        )
+                    )
+                    yield "permission.requested", entry.describe()
+                elif isinstance(event, PermissionAnswered):
+                    entry = self.permissions.settle(event.request)
+                    if entry is None or entry.decision is None:
+                        continue  # Decided without asking, or withdrawn with its turn.
+                    allow, remembered = entry.decision
+                    message_id = self._record_delivery(
+                        workspace_id, thread_id, None, event.request.title,
+                        {"allow": allow, "kind": event.request.kind, "remembered": remembered},
+                        kind="permission_decision", outcome="allowed" if allow else "refused",
+                    )
+                    yield "permission.decided", {
+                        "requestId": entry.id, "messageId": message_id,
+                        "allow": allow, "remembered": remembered,
+                    }
                 elif isinstance(event, PermissionRefused):
                     message_id = self._record(
                         workspace_id, thread_id, "permission_refused", event.title, "refused"
@@ -401,6 +440,9 @@ class TurnService:
             if inbox is not None:
                 bus.unsubscribe(node_id, thread_id, inbox)
             self._active.pop(turn_id, None)
+            # Nothing may stay pending for a turn that is over: the indicator
+            # would point at a request nobody can answer.
+            self.permissions.withdraw_turn(turn_id)
             # The agent has now been given everything up to this turn, however
             # it ended: its next turn needs only what comes after the reply.
             self._mark_synced(continuation.row_id, agent_message_id)
@@ -542,6 +584,7 @@ class TurnService:
         content: str,
         data: dict[str, Any],
         kind: str = "practice_delivered",
+        outcome: str | None = None,
     ) -> str:
         with session_scope() as session:
             if message_id is not None:
@@ -550,7 +593,7 @@ class TurnService:
             else:
                 record = ChatMessageRecord(
                     workspace_id=workspace_id, thread_id=thread_id, role="agent",
-                    kind=kind, content=content, data=data,
+                    kind=kind, content=content, data=data, outcome=outcome,
                 )
                 session.add(record)
                 session.flush()
@@ -585,6 +628,12 @@ class TurnService:
             if event.status:
                 record.outcome = event.status
         return message_id
+
+    @staticmethod
+    def _node_title(node_id: str) -> str:
+        with session_scope() as session:
+            node = session.get(WorkspaceNodeRecord, node_id)
+            return node.title if node is not None else ""
 
     def _write_content(self, message_id: str, content: str) -> None:
         with session_scope() as session:

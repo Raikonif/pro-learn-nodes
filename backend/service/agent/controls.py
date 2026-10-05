@@ -2,9 +2,9 @@
 
 Options are found by category, the one thing both measured agents agree on
 (`model`, `thought_level`, `model_config`, `mode`); their ids differ. Modes are
-grouped by what they let the agent do here, where every permission request
-is refused: a mode that asks is effectively read-only, and only a mode that
-does not ask lets the agent act. An unknown mode is put in the most
+grouped by what they let the agent do without asking: in a mode that asks,
+each request is presented to the learner (`service/agent/permissions.py`),
+and the agent acts once they allow it. An unknown mode is put in the most
 permissive group — assumed to allow the most, never the least.
 """
 
@@ -20,7 +20,7 @@ __all__ = ["CONTROL_OF_CATEGORY", "MODE_GROUPS", "mode_group", "serialize_comman
 CONTROL_OF_CATEGORY = {"model": "model", "thought_level": "effort", "model_config": "fast", "mode": "mode"}
 
 MODE_GROUPS: dict[str, str] = {
-    # Asks before acting (refused here): effectively read-only.
+    # Asks before acting: each request is put to the learner.
     "default": "asks", "plan": "asks", "read-only": "asks", "agent": "asks",
     # Edits the session's folder without asking.
     "acceptEdits": "edits", "workspace-write": "edits",

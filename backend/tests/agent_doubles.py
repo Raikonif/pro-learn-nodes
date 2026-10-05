@@ -19,6 +19,9 @@ from service.agent.contract import (
     AgentLaunchError,
     AgentNotAuthenticated,
     Negotiation,
+    PermissionAnswered,
+    PermissionOption,
+    PermissionRequest,
     SessionLoadFailed,
     TextChunk,
     TurnEnded,
@@ -44,6 +47,8 @@ class FakeAgent:
     settings: dict[str, dict[str, str]] = field(default_factory=dict)
     set_calls: list = field(default_factory=list)
     mcp_loads: dict[str, list] = field(default_factory=dict)
+    # Permission requests asked, and the option each was answered with.
+    answers: list = field(default_factory=list)
 
     @property
     def negotiation(self) -> Negotiation:
@@ -81,7 +86,15 @@ class FakeAgent:
             if session_id in self.cancelled:
                 yield TurnEnded("cancelled")
                 return
+            if isinstance(event, PermissionRequest):
+                # Like the ACP client: waiting before the request is seen, so a
+                # cancel that follows it always finds it.
+                self._waiting.setdefault(session_id, []).append(event.decision)
             yield event
+            if isinstance(event, PermissionRequest):
+                option_id = await event.decision
+                self.answers.append((event.title, option_id))
+                yield PermissionAnswered(event, option_id)
         yield TurnEnded("completed")
 
     def config_options(self, session_id: str) -> list:
@@ -100,11 +113,34 @@ class FakeAgent:
 
     async def cancel(self, session_id: str) -> None:
         self.cancelled.append(session_id)
+        for decision in self._waiting.pop(session_id, []):
+            if not decision.done():
+                decision.set_result(None)
         if self.gate is not None:
             self.gate.set()
 
     async def close(self) -> None:
         self.closed = True
+
+    @property
+    def _waiting(self) -> dict[str, list]:
+        waiting = self.__dict__.setdefault("_waiting_decisions", {})
+        return waiting
+
+
+ONCE_OPTIONS = (
+    PermissionOption("allow", "Allow", "allow_once"),
+    PermissionOption("always", "Always allow", "allow_always"),
+    PermissionOption("reject", "Reject", "reject_once"),
+)
+
+
+def asks(kind: str | None, title: str, locations: tuple[str, ...] = (), options=ONCE_OPTIONS) -> PermissionRequest:
+    """A permission request, made inside a running turn (for `FakeAgent.script`)."""
+
+    return PermissionRequest(
+        "call-perm", title, kind, locations, options, asyncio.get_running_loop().create_future()
+    )
 
 
 def launcher_for(agent: FakeAgent | None = None, *, fail: bool = False):

@@ -21,7 +21,8 @@ from service.agent.contract import (
     AgentLaunchError,
     AgentNegotiationError,
     AgentNotAuthenticated,
-    PermissionRefused,
+    PermissionAnswered,
+    PermissionRequest,
     PlanUpdate,
     SessionLoadFailed,
     TextChunk,
@@ -227,16 +228,97 @@ async def test_two_sessions_on_one_connection_do_not_see_each_other(start, tmp_p
 # --- agent → client requests ------------------------------------------
 
 
-async def test_a_permission_request_is_refused_and_reported(start, tmp_path):
+async def answering(agent: AcpAgent, session_id: str, text: str, decide, *, wait: float = 0.0) -> list:
+    """Run a turn, answering each permission request with `decide(request)` after `wait`."""
+
+    events = []
+    async for event in agent.prompt(session_id, text):
+        events.append(event)
+        if isinstance(event, PermissionRequest):
+            await asyncio.sleep(wait)
+            event.decision.set_result(decide(event))
+    return events
+
+
+async def test_a_permission_request_waits_for_the_answer_and_the_agent_acts(start, tmp_path):
     agent = await start("--request-permission", "--chunks", "1")
     session_id = await agent.new_session(tmp_path)
 
-    events = await collect(agent, session_id, "hello")
+    events = await answering(agent, session_id, "hello", lambda request: "allow")
 
-    assert PermissionRefused("Write notes.md", tool_call_id="call-perm") in events
-    # The agent saw the refusal and carried on: the turn did not hang.
-    assert "permission cancelled" in text_of(events)
+    request = next(e for e in events if isinstance(e, PermissionRequest))
+    assert (request.title, request.kind) == ("Write notes.md", "edit")
+    assert request.locations == (str(tmp_path / "notes.md"),)
+    assert [(o.option_id, o.kind) for o in request.options] == [
+        ("allow", "allow_once"), ("always", "allow_always"), ("reject", "reject_once"),
+    ]
+    answered = next(e for e in events if isinstance(e, PermissionAnswered))
+    assert answered.request is request and answered.option_id == "allow"
+    assert "permission selected allow" in text_of(events)
+    assert (tmp_path / "notes.md").read_text() == "written by the fake agent\n"
     assert events[-1] == TurnEnded("completed")
+
+
+async def test_a_refusal_is_delivered_and_the_turn_continues(start, tmp_path):
+    agent = await start("--request-permission", "--chunks", "1")
+    session_id = await agent.new_session(tmp_path)
+
+    events = await answering(agent, session_id, "hello", lambda request: "reject")
+
+    assert "permission selected reject" in text_of(events)
+    assert not (tmp_path / "notes.md").exists()
+    assert events[-1] == TurnEnded("completed")
+
+
+async def test_an_option_the_agent_did_not_offer_is_answered_cancelled(start, tmp_path):
+    agent = await start("--request-permission", "--chunks", "1")
+    session_id = await agent.new_session(tmp_path)
+
+    events = await answering(agent, session_id, "hello", lambda request: "made-up")
+
+    assert "permission cancelled" in text_of(events)
+    assert next(e for e in events if isinstance(e, PermissionAnswered)).option_id is None
+
+
+async def test_a_learner_thinking_longer_than_the_idle_timeout_is_not_a_hung_agent(start, tmp_path):
+    agent = await start("--request-permission", "--chunks", "1", idle_timeout=0.3)
+    session_id = await agent.new_session(tmp_path)
+
+    events = await answering(agent, session_id, "hello", lambda request: "allow", wait=0.8)
+
+    assert events[-1] == TurnEnded("completed")
+    assert agent.alive
+
+
+async def test_cancelling_answers_a_waiting_request_cancelled(start, tmp_path):
+    agent = await start("--request-permission", "--chunks", "1")
+    session_id = await agent.new_session(tmp_path)
+
+    events = []
+    async for event in agent.prompt(session_id, "hello"):
+        events.append(event)
+        if isinstance(event, PermissionRequest):
+            # The connection is still reading: cancel reaches the agent.
+            await agent.cancel(session_id)
+            assert event.decision.result() is None
+
+    assert "permission cancelled" in text_of(events)
+    assert isinstance(events[-1], TurnEnded)
+
+
+async def test_abandoning_the_turn_answers_a_waiting_request(start, tmp_path):
+    agent = await start("--request-permission", "--chunks", "1")
+    session_id = await agent.new_session(tmp_path)
+
+    turn = agent.prompt(session_id, "hello")
+    request = None
+    async for event in turn:
+        if isinstance(event, PermissionRequest):
+            request = event
+            break
+    await turn.aclose()
+
+    assert request is not None and request.decision.result() is None
 
 
 async def test_an_unimplemented_client_method_is_answered_method_not_found(start, tmp_path):

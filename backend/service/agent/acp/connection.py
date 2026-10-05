@@ -43,6 +43,18 @@ NotificationHandler = Callable[[str, dict[str, Any]], None]
 RequestHandler = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
 
+class Deferred:
+    """A handler's answer that is not ready yet: sent when `answer` completes.
+
+    The handler still runs inline, so whatever it reports lands in stream
+    order; only the reply waits — on a learner, say — while the connection
+    keeps reading. `answer` returns the result or raises `RpcError`.
+    """
+
+    def __init__(self, answer: Awaitable[Any]) -> None:
+        self.answer = answer
+
+
 class RpcError(Exception):
     """A JSON-RPC error response, from the agent or to it."""
 
@@ -76,6 +88,9 @@ class AcpConnection:
         self._name = name
         self._next_id = 0
         self._pending: dict[int, asyncio.Future[Any]] = {}
+        # Replies still being worked out (`Deferred`), held so they are not
+        # collected mid-flight and can be stopped when the process ends.
+        self._answering: set[asyncio.Task[None]] = set()
         self._stderr_tail: deque[str] = deque(maxlen=STDERR_TAIL)
         self._closed = False
         self._exit_reason: str | None = None
@@ -226,21 +241,43 @@ class AcpConnection:
             self._on_notification(method, params)
             return
 
-        # Answered inline, in stream order, so whatever the handler reports
-        # lands between the updates it arrived between. Handlers answer
-        # immediately; none of them may wait on the agent.
+        # Handled inline, in stream order, so whatever the handler reports
+        # lands between the updates it arrived between. A handler that must
+        # wait returns `Deferred`, and only its reply is sent later: reading
+        # never stops, or a dead agent or a cancel could not be noticed.
         try:
             result = await self._on_request(method, params)
-            reply: dict[str, Any] = {"jsonrpc": "2.0", "id": message["id"], "result": result}
-        except RpcError as error:
-            reply = {"jsonrpc": "2.0", "id": message["id"], "error": error.to_wire()}
         except Exception as error:
-            logger.exception("%s: handler for %s failed", self._name, method)
+            await self._reply(message["id"], method, error)
+            return
+        if isinstance(result, Deferred):
+            task = asyncio.create_task(self._reply_later(message["id"], method, result.answer))
+            self._answering.add(task)
+            task.add_done_callback(self._answering.discard)
+            return
+        await self._reply(message["id"], method, result)
+
+    async def _reply_later(self, request_id: Any, method: str, answer: Awaitable[Any]) -> None:
+        try:
+            result = await answer
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            result = error
+        await self._reply(request_id, method, result)
+
+    async def _reply(self, request_id: Any, method: str, result: Any) -> None:
+        if isinstance(result, RpcError):
+            reply: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "error": result.to_wire()}
+        elif isinstance(result, Exception):
+            logger.error("%s: handler for %s failed", self._name, method, exc_info=result)
             reply = {
                 "jsonrpc": "2.0",
-                "id": message["id"],
-                "error": {"code": -32603, "message": f"internal error: {error}"},
+                "id": request_id,
+                "error": {"code": -32603, "message": f"internal error: {result}"},
             }
+        else:
+            reply = {"jsonrpc": "2.0", "id": request_id, "result": result}
         with contextlib.suppress(AgentExited):
             await self._send(reply)
 
@@ -267,6 +304,8 @@ class AcpConnection:
             async with asyncio.timeout(0.5):
                 await self._process.wait()
                 await asyncio.shield(self._stderr)
+        for task in list(self._answering):
+            task.cancel()
         exited = AgentExited(self.exit_reason)
         for future in self._pending.values():
             if not future.done():
@@ -294,6 +333,8 @@ class AcpConnection:
             self._stderr.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await self._stderr
+        for task in list(self._answering):
+            task.cancel()
         exited = AgentExited(self.exit_reason)
         for future in self._pending.values():
             if not future.done():

@@ -5,9 +5,12 @@ import type { ChatMessage, TurnOutcome } from '../../shared/lib/workspace-types'
 
 import { revealDelivery } from '../practice'
 
+import { usePermissionsStore } from '../permissions'
+
 import {
   cancelTurn,
   streamTurn,
+  type PermissionRequest,
   type PlanEntry,
   type PracticeDelivery,
   type TurnCommand,
@@ -37,6 +40,15 @@ export type LiveEntry =
     }
   | { type: 'plan'; key: string; entries: PlanEntry[] }
   | { type: 'permission_refused'; key: string; id: string; title: string }
+  | {
+      type: 'permission_decision'
+      key: string
+      id: string
+      title: string
+      kind: string | null
+      allow: boolean
+      remembered: boolean
+    }
   | { type: 'continuity_seam'; key: string; id: string; reason: string }
   | { type: 'settings_notice'; key: string; id: string; text: string }
   | ({ type: 'practice_delivered'; key: string; id: string } & Omit<PracticeDelivery, 'messageId'>)
@@ -58,6 +70,11 @@ export type LiveTurn = {
   reason: string | null
   detail: string | null
   usage: TurnUsage | null
+  /**
+   * What the agent is asking and the learner has not answered. Not entries:
+   * nothing is recorded until it is answered, and the answer is what stays.
+   */
+  permissions: PermissionRequest[]
   /** The recorded entries have been folded into the workspace graph. */
   settled: boolean
 }
@@ -67,6 +84,11 @@ type TurnState = {
   /** `command` marks a `/code`, `/qa` or `/quiz` message; `text` is still the message as typed. */
   send: (threadId: string, text: string, command?: TurnCommand) => Promise<void>
   stop: (threadId: string) => void
+  /**
+   * Drops a request this turn is showing: it was answered elsewhere, or no
+   * longer exists. Its `permission.decided`, if any, still records the answer.
+   */
+  dismissPermission: (threadId: string, requestId: string) => void
   /** Test-only: forget every turn and abort any stream still open. */
   reset: () => void
 }
@@ -130,6 +152,31 @@ function apply(turn: LiveTurn, event: TurnEvent): LiveTurn {
       const others = turn.entries.filter((entry) => entry.type !== 'plan')
       return { ...turn, entries: [...others, { type: 'plan', key: 'plan', entries: event.entries }] }
     }
+    case 'permission.requested':
+      if (turn.permissions.some((request) => request.requestId === event.requestId)) return turn
+      {
+        const { type: _type, ...request } = event
+        return { ...turn, permissions: [...turn.permissions, request] }
+      }
+    case 'permission.decided': {
+      const request = turn.permissions.find((r) => r.requestId === event.requestId)
+      return {
+        ...turn,
+        permissions: turn.permissions.filter((r) => r.requestId !== event.requestId),
+        entries: [
+          ...turn.entries,
+          {
+            type: 'permission_decision',
+            key: event.messageId,
+            id: event.messageId,
+            title: request?.title ?? '',
+            kind: request?.kind ?? null,
+            allow: event.allow,
+            remembered: event.remembered,
+          },
+        ],
+      }
+    }
     case 'permission.refused':
       return {
         ...turn,
@@ -183,8 +230,10 @@ function apply(turn: LiveTurn, event: TurnEvent): LiveTurn {
     case 'context.usage':
       return turn
     case 'turn.ended':
+      // A request outlives nothing: whatever was still unanswered is withdrawn.
       return {
         ...turn,
+        permissions: [],
         phase: 'ended',
         outcome: event.outcome,
         reason: event.reason,
@@ -212,6 +261,18 @@ function recordedMessages(turn: LiveTurn): ChatMessage[] {
       case 'permission_refused':
         return [
           { ...base, id: entry.id, role: 'agent', content: entry.title, kind: 'permission_refused', outcome: null },
+        ]
+      case 'permission_decision':
+        return [
+          {
+            ...base,
+            id: entry.id,
+            role: 'agent',
+            content: entry.title,
+            kind: 'permission_decision',
+            outcome: entry.allow ? null : 'refused',
+            data: { allow: entry.allow, kind: entry.kind, remembered: entry.remembered },
+          },
         ]
       case 'continuity_seam':
         return [
@@ -311,6 +372,7 @@ export const useTurnStore = create<TurnState>((set, get) => {
             reason: null,
             detail: null,
             usage: null,
+            permissions: [],
             settled: false,
           },
         },
@@ -324,6 +386,10 @@ export const useTurnStore = create<TurnState>((set, get) => {
           }
           if (event.type === 'session.state' || event.type === 'context.usage') {
             recordSessionReport(threadId, event)
+          }
+          if (event.type === 'permission.decided') usePermissionsStore.getState().forget(event.requestId)
+          if (event.type === 'permission.requested' || event.type === 'permission.decided') {
+            void usePermissionsStore.getState().refreshPending()
           }
         }
       } catch (error) {
@@ -342,10 +408,13 @@ export const useTurnStore = create<TurnState>((set, get) => {
       // The stream is over. Without a `turn.ended`, the turn is either one the
       // learner stopped (and whose confirmation was abandoned) or one whose
       // connection dropped — recorded content survives it, marked incomplete.
+      const unanswered = get().turns[threadId]?.runId === runId ? get().turns[threadId].permissions : []
+      for (const request of unanswered) usePermissionsStore.getState().forget(request.requestId)
       update(threadId, runId, (turn) => {
-        if (turn.outcome) return { ...turn, phase: 'ended' }
+        if (turn.outcome) return { ...turn, permissions: [], phase: 'ended' }
         return {
           ...turn,
+          permissions: [],
           phase: 'ended',
           outcome: turn.phase === 'stopping' ? 'cancelled' : 'incomplete',
           reason: turn.phase === 'stopping' ? null : 'connection_lost',
@@ -373,7 +442,9 @@ export const useTurnStore = create<TurnState>((set, get) => {
       const turn = get().turns[threadId]
       if (!turn || turn.phase !== 'running') return
       const { runId, turnId } = turn
-      update(threadId, runId, (t) => ({ ...t, phase: 'stopping' }))
+      // Stopping withdraws what the turn was asking: there is no turn left to answer.
+      for (const request of turn.permissions) usePermissionsStore.getState().forget(request.requestId)
+      update(threadId, runId, (t) => ({ ...t, phase: 'stopping', permissions: [] }))
       const abort = () => controllers.get(runId)?.abort()
       if (turnId === null) {
         // Nothing to cancel server-side yet; dropping the request is all there is.
@@ -384,6 +455,15 @@ export const useTurnStore = create<TurnState>((set, get) => {
       // The cancel should end the stream with `turn.ended { cancelled }`; if
       // it does not arrive, stop listening rather than hold the turn open.
       stopTimers.set(runId, setTimeout(abort, STOP_GRACE_MS))
+    },
+
+    dismissPermission: (threadId, requestId) => {
+      const turn = get().turns[threadId]
+      if (!turn) return
+      update(threadId, turn.runId, (t) => ({
+        ...t,
+        permissions: t.permissions.filter((request) => request.requestId !== requestId),
+      }))
     },
 
     reset: () => {
@@ -404,4 +484,9 @@ export function liveMessageIds(turn: LiveTurn | undefined): Set<string> {
     if ('id' in entry && entry.id) ids.add(entry.id)
   }
   return ids
+}
+
+/** Whether any conversation has a turn in progress — when an agent may ask. */
+export function useAnyTurnRunning(): boolean {
+  return useTurnStore((s) => Object.values(s.turns).some((turn) => turn.phase === 'running'))
 }

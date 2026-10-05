@@ -1,8 +1,12 @@
+import { useState } from 'react'
+
+import { kindPhrase, PermissionRequestCard, usePermissionsStore } from '../../permissions'
 import { practiceToolLabel, revealDelivery, type DeliveredTool } from '../../practice'
 import { useAgentsStore } from '../../settings'
 import type { PlanEntry } from '../chat-api'
 import { deliveryText } from '../delivery'
-import type { LiveTurn } from '../turn-store'
+import { useTurnStore, type LiveTurn } from '../turn-store'
+import type { PermissionRequest } from '../chat-api'
 import type { TurnOutcome } from '../../../shared/lib/workspace-types'
 
 /**
@@ -52,10 +56,77 @@ export function PermissionRefusedNotice({ title }: { title: string }) {
       <p>
         The agent asked to: <span className="font-medium">{title}</span>. The request was refused.
       </p>
-      <p className="text-orange-800">
-        Granting permissions to an agent is not available yet — it arrives in a later update.
-      </p>
+      <p className="text-orange-800">It arrived when nothing could ask you, so it was refused without asking.</p>
     </div>
+  )
+}
+
+/** What the learner answered when the agent asked — part of the record. */
+export function PermissionDecisionNotice({
+  title,
+  kind,
+  allow,
+  remembered,
+}: {
+  title: string
+  kind: string | null
+  allow: boolean
+  remembered: boolean
+}) {
+  return (
+    <div
+      role="note"
+      data-testid="permission-decision"
+      data-allow={allow ? 'true' : 'false'}
+      className={`rounded border px-2 py-1 text-xs ${
+        allow ? 'border-sky-200 bg-sky-50 text-sky-900' : 'border-orange-200 bg-orange-50 text-orange-900'
+      }`}
+    >
+      <span className="font-semibold">{allow ? 'Allowed' : 'Refused'}:</span>{' '}
+      <span className="font-medium">{title || kindPhrase(kind)}</span>
+      {remembered ? <span className="ml-1">— remembered for this node</span> : null}
+    </div>
+  )
+}
+
+/** Reads a recorded `permission_decision` message's answer and detail. */
+export function readDecision(outcome: string | null, data: Record<string, unknown> | null | undefined) {
+  const allow = typeof data?.allow === 'boolean' ? data.allow : outcome !== 'refused'
+  return {
+    allow,
+    kind: typeof data?.kind === 'string' ? data.kind : null,
+    remembered: data?.remembered === true,
+  }
+}
+
+/**
+ * A request the agent is waiting on, answered here. On an answer it stays
+ * until the turn reports it decided (which records it); if it was already
+ * answered elsewhere, or is gone, it simply leaves.
+ */
+export function PermissionPrompt({ threadId, request }: { threadId: string; request: PermissionRequest }) {
+  const decide = usePermissionsStore((s) => s.decide)
+  const busy = usePermissionsStore((s) => Boolean(s.answering[request.requestId]))
+  const dismiss = useTurnStore((s) => s.dismissPermission)
+  const [error, setError] = useState<string | null>(null)
+
+  async function answer(allow: boolean, remember: boolean) {
+    setError(null)
+    try {
+      const result = await decide(request.requestId, allow, remember)
+      if (result === 'gone') dismiss(threadId, request.requestId)
+    } catch {
+      setError('The answer could not be sent. Try again.')
+    }
+  }
+
+  return (
+    <PermissionRequestCard
+      request={request}
+      busy={busy}
+      error={error}
+      onAnswer={(allow, remember) => void answer(allow, remember)}
+    />
   )
 }
 
@@ -230,6 +301,17 @@ export function LiveTurnEntries({ turn, nodeId }: { turn: LiveTurn; nodeId: stri
                 <PermissionRefusedNotice title={entry.title} />
               </li>
             )
+          case 'permission_decision':
+            return (
+              <li key={entry.key}>
+                <PermissionDecisionNotice
+                  title={entry.title}
+                  kind={entry.kind}
+                  allow={entry.allow}
+                  remembered={entry.remembered}
+                />
+              </li>
+            )
           case 'continuity_seam':
             return (
               <li key={entry.key}>
@@ -254,6 +336,13 @@ export function LiveTurnEntries({ turn, nodeId }: { turn: LiveTurn; nodeId: stri
             )
         }
       })}
+      {turn.phase === 'running'
+        ? turn.permissions.map((request) => (
+            <li key={`permission-${request.requestId}`}>
+              <PermissionPrompt threadId={turn.threadId} request={request} />
+            </li>
+          ))
+        : null}
     </>
   )
 }

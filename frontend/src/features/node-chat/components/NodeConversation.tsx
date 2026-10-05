@@ -25,12 +25,14 @@ import {
   EmptyReply,
   LiveTurnEntries,
   OutcomeBadge,
+  PermissionDecisionNotice,
   PermissionRefusedNotice,
   PracticeDeliveredEntry,
   PracticeNotDeliveredNotice,
   SettingsNotice,
   ToolEntry,
   TurnNotice,
+  readDecision,
 } from './TurnEntries'
 
 const ROLE_LABELS = { learner: 'You', agent: 'Agent' } as const
@@ -197,6 +199,12 @@ function RecordedMessage({
       return (
         <li>
           <PermissionRefusedNotice title={message.content} />
+        </li>
+      )
+    case 'permission_decision':
+      return (
+        <li>
+          <PermissionDecisionNotice title={message.content} {...readDecision(message.outcome, message.data)} />
         </li>
       )
     case 'continuity_seam':

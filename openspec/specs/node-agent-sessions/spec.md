@@ -6,6 +6,7 @@ Keeps the graph the application's own â€” persistent, branchable, and durable â€
 
 ## Requirements
 
+
 ### Requirement: The recorded conversation is the application's, not the agent's
 The system SHALL record every message of a conversation in its own storage as it occurs, and SHALL treat that record as authoritative. Reading a past conversation SHALL NOT require an agent to be installed, configured, running, or reachable.
 
@@ -95,3 +96,22 @@ When a parent's conversation up to the branch point exceeds a fixed budget, the 
 #### Scenario: Branching from a long conversation
 - **WHEN** a learner branches from late in a conversation longer than the budget
 - **THEN** the child's agent receives the most recent messages up to the branch point, the passage, and a statement that earlier messages were omitted
+
+### Requirement: A node's working directory bounds what an agent can reach
+The system SHALL give each node a directory that is the working directory of any agent running that node's conversation. The directory SHALL hold only that node's material, such as the practice the learner is working on in it. An agent SHALL NOT be given a working directory that contains another node's material, the application's own data store, or an arbitrary location on the device.
+
+#### Scenario: The agent reaches this node's practice
+- **WHEN** a learner is working on an exercise in a node and the agent lists its working directory
+- **THEN** the exercise and the learner's current solution are present and readable there
+
+#### Scenario: The agent does not reach another node's material
+- **WHEN** an agent running one node's conversation enumerates its working directory
+- **THEN** no other node's material and no part of the application's data store is present
+
+#### Scenario: Archiving keeps the directory
+- **WHEN** a node is archived and later restored
+- **THEN** its directory holds the same material it held before it was archived
+
+#### Scenario: Deleting an account removes its nodes' directories
+- **WHEN** an account is deleted
+- **THEN** the directory of every node it owned is removed, and nothing outside those directories is removed, including anything a link inside one of them points to

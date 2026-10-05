@@ -22,13 +22,18 @@ by clicking the wrong item in a menu.
 
 from __future__ import annotations
 
+import logging
+import shutil
+from pathlib import Path
+
 from sqlalchemy import delete, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from core.database import session_scope
+from core.database import database_path, session_scope
 from core.exceptions import NotFoundError, ValidationError
 from core.secrets import SecretStore, get_secret_store
+from models.permission import PermissionDecisionRecord
 from models.profile import ProfileRecord
 from models.project import ProjectRecord
 from models.workspace import (
@@ -56,6 +61,32 @@ _REMOVAL_CONSEQUENCE = (
     "removes the account from this device and permanently destroys its "
     "workspace, nodes, conversations, and sources"
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _remove_node_directories(node_ids: list[str]) -> None:
+    """Remove each node's agent working directory, never anything a link inside points to.
+
+    `shutil.rmtree` removes a symbolic link inside the tree as a link, without
+    descending into it; a node directory that is itself a link is unlinked,
+    not followed. Best effort per node: one that cannot be removed is logged
+    and does not stop the rest.
+    """
+
+    from service.agent.sessions import node_directory
+
+    data_dir = database_path().parent
+    for node_id in node_ids:
+        directory: Path = node_directory(data_dir, node_id)
+        try:
+            if directory.is_symlink():
+                directory.unlink()
+            elif directory.exists():
+                shutil.rmtree(directory)
+        except OSError:
+            logger.warning("Could not remove the agent directory of node %s", node_id, exc_info=True)
 
 
 def _purge_workspace(session: Session, workspace_id: str) -> None:
@@ -93,6 +124,7 @@ def _purge_workspace(session: Session, workspace_id: str) -> None:
         ChatMessageRecord,
         ChatThreadRecord,
         WorkspaceContextRecord,
+        PermissionDecisionRecord,
         WorkspaceNodeRecord,
         ProjectRecord,
     ):
@@ -220,9 +252,16 @@ class ProfileService:
             workspace_ids = session.exec(
                 select(WorkspaceRecord.id).where(WorkspaceRecord.profile_id == profile_id)
             ).all()
+            node_ids = session.exec(
+                select(WorkspaceNodeRecord.id).where(WorkspaceNodeRecord.workspace_id.in_(workspace_ids))
+            ).all()
             for workspace_id in workspace_ids:
                 _purge_workspace(session, workspace_id)
             profile_repo.delete(session, profile_id)
+
+        # Only once the rows are gone: a removal that failed mid-transaction
+        # must not have taken the files of an account that still exists.
+        _remove_node_directories(node_ids)
 
         # After the rows are gone, and only for the account just removed. The
         # session is cleared here rather than first because a removal that

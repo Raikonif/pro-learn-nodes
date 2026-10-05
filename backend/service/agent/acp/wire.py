@@ -210,15 +210,37 @@ def parse_update(update: dict[str, Any]) -> KnownUpdate | None:
 # --- session/request_permission -------------------------------------------
 
 
+class ToolCallLocation(WireModel):
+    path: str
+    line: int | None = None
+
+
 class PermissionToolCall(WireModel):
     tool_call_id: str | None = None
     title: str | None = None
+    kind: str | None = None
+    locations: list[ToolCallLocation] = []
+
+
+class PermissionOptionWire(WireModel):
+    """One answer the agent offers. `kind` is `allow_once`, `allow_always`,
+    `reject_once`, or `reject_always`; any other value is kept and never chosen."""
+
+    option_id: str
+    name: str | None = None
     kind: str | None = None
 
 
 class RequestPermissionParams(WireModel):
     session_id: str
     tool_call: PermissionToolCall = PermissionToolCall()
+    options: list[PermissionOptionWire] = []
 
 
 CANCELLED_PERMISSION: dict[str, Any] = {"outcome": {"outcome": "cancelled"}}
+
+
+def selected_permission(option_id: str) -> dict[str, Any]:
+    """The answer that picks one of the agent's offered options."""
+
+    return {"outcome": {"outcome": "selected", "optionId": option_id}}

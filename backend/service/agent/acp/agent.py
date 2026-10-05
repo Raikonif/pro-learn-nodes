@@ -7,10 +7,12 @@ JSON-RPC and processes. Three rules from the change design shape it:
   only while a `prompt` for its session is running. Everything else —
   notably the history an agent replays during `session/load` — is dropped,
   because the application's transcript already holds it.
-- **Permission is always answered, and visibly refused.** Until the prompt
-  surface of `acp-agent-permissions-and-branching` exists, every request is
-  answered `cancelled` at once and reported to the running turn as
-  `PermissionRefused`, so a turn neither hangs nor is silently decided.
+- **Permission is always answered.** A request inside a turn becomes a
+  `PermissionRequest` for whoever runs the turn, and the agent is answered
+  with what they decide — while the connection keeps reading, and with the
+  idle timeout suspended, because a learner thinking is not a hung agent.
+  The turn ending first answers it `cancelled`. A request outside any turn
+  has nobody to ask and is refused at once.
 - **A turn never raises.** Process exit, a silent agent, or a protocol error
   mid-turn all become `TurnEnded("failed", reason)` after whatever was already
   yielded. A hung agent is also marked dead so the supervisor replaces it
@@ -29,7 +31,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from service.agent.acp import wire
-from service.agent.acp.connection import AcpConnection, RpcError
+from service.agent.acp.connection import AcpConnection, Deferred, RpcError
 from service.agent.contract import (
     AgentError,
     AvailableCommand,
@@ -47,7 +49,9 @@ from service.agent.contract import (
     AgentTimeout,
     AuthMethod,
     Negotiation,
-    PermissionRefused,
+    PermissionAnswered,
+    PermissionOption,
+    PermissionRequest,
     PlanEntry,
     PlanUpdate,
     SessionLoadFailed,
@@ -97,6 +101,8 @@ class AcpAgent:
         # announced right after `session/new`, before any prompt.
         self._options: dict[str, list[ConfigOption]] = {}
         self._commands: dict[str, list[AvailableCommand]] = {}
+        # Permission requests each session's running turn is waiting on.
+        self._waiting: dict[str, set[asyncio.Future[str | None]]] = {}
         self._request_timeout = request_timeout
         self._idle_timeout = idle_timeout
         self._kill_grace = kill_grace
@@ -251,8 +257,10 @@ class AcpAgent:
         request.add_done_callback(lambda _: queue.put_nowait(_DONE))
         try:
             while True:
+                # Silence while a request waits on the learner is the learner's.
+                idle = None if self._waiting.get(session_id) else self._idle_timeout
                 try:
-                    async with asyncio.timeout(self._idle_timeout):
+                    async with asyncio.timeout(idle):
                         item = await queue.get()
                 except TimeoutError:
                     self._abandon_hung(f"no message for {self._idle_timeout:g}s")
@@ -268,6 +276,7 @@ class AcpAgent:
                 yield item
         finally:
             self._turns.pop(session_id, None)
+            self._release(session_id)
             if not request.done():
                 # Abandoned by the consumer, or timed out: stop the agent's
                 # work too, so the next turn is not queued behind it.
@@ -279,11 +288,18 @@ class AcpAgent:
                         )
 
     async def cancel(self, session_id: str) -> None:
+        # ACP: on cancel, every pending permission request is answered `cancelled`.
+        self._release(session_id)
         connection = self._require_connection()
         if not connection.alive:
             return
         with contextlib.suppress(AgentError):
             await connection.notify("session/cancel", wire.CancelParams(session_id=session_id).dump())
+
+    def _release(self, session_id: str) -> None:
+        for decision in self._waiting.pop(session_id, set()):
+            if not decision.done():
+                decision.set_result(None)
 
     def _abandon_hung(self, reason: str) -> None:
         connection = self._require_connection()
@@ -363,20 +379,41 @@ class AcpAgent:
             except ValidationError:
                 return wire.CANCELLED_PERMISSION
             call = request.tool_call
+            title = call.title or call.kind or "an unnamed action"
             queue = self._turns.get(request.session_id)
-            if queue is not None:
-                queue.put_nowait(
-                    PermissionRefused(
-                        title=call.title or call.kind or "an unnamed action",
-                        tool_call_id=call.tool_call_id,
-                    )
-                )
-            else:
-                logger.info("Refused a permission request outside any turn: %s", call.title)
-            return wire.CANCELLED_PERMISSION
+            if queue is None:
+                logger.info("Refused a permission request outside any turn: %s", title)
+                return wire.CANCELLED_PERMISSION
+            options = tuple(PermissionOption(o.option_id, o.name, o.kind) for o in request.options)
+            asked = PermissionRequest(
+                tool_call_id=call.tool_call_id,
+                title=title,
+                kind=call.kind,
+                locations=tuple(location.path for location in call.locations),
+                options=options,
+                decision=asyncio.get_running_loop().create_future(),
+            )
+            self._waiting.setdefault(request.session_id, set()).add(asked.decision)
+            queue.put_nowait(asked)
+            return Deferred(self._answer(request.session_id, asked))
         # No `fs` or `terminal` capability is advertised, so a well-behaved
         # agent never asks; one that does is answered, not left pending.
         raise RpcError(wire.METHOD_NOT_FOUND, f"Method not found: {method}")
+
+
+    async def _answer(self, session_id: str, asked: PermissionRequest) -> dict[str, Any]:
+        """Wait for the decision, tell the turn it was made, and answer the agent."""
+
+        try:
+            option_id = await asked.decision
+        finally:
+            self._waiting.get(session_id, set()).discard(asked.decision)
+        if option_id not in {option.option_id for option in asked.options}:
+            option_id = None
+        queue = self._turns.get(session_id)
+        if queue is not None:
+            queue.put_nowait(PermissionAnswered(asked, option_id))
+        return wire.CANCELLED_PERMISSION if option_id is None else wire.selected_permission(option_id)
 
 
 def _parse_options(raw: list[Any]) -> list[ConfigOption]:

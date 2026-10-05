@@ -876,3 +876,177 @@ async def test_membership_not_reachability_decides_which_instructions_apply(acco
     [prompt] = agent.sessions["s1"]
     assert 'Project "A-child" instructions:\nChild rules.' in prompt
     assert "Parent rules." not in prompt
+
+
+# --- Permission requests ---------------------------------------------------
+
+from tests.agent_doubles import asks  # noqa: E402
+
+
+async def _answering(service: TurnService, account, thread: str, text: str, *, allow=True, remember=False, seen=None):
+    """Run a turn, answering each request through the registry as the decision route would."""
+
+    profile_id, workspace_id, _ = account
+    events = []
+    async for name, data in service.run_turn(profile_id, workspace_id, thread, text):
+        events.append((name, data))
+        if name == "permission.requested":
+            if seen is not None:
+                seen.append([e.describe() for e in service.permissions.pending(workspace_id)])
+            service.permissions.decide(workspace_id, data["requestId"], allow=allow, remember=remember)
+    return events
+
+
+def _names(events) -> list[str]:
+    return [name for name, _ in events]
+
+
+async def test_allowing_a_request_lets_the_agent_act_and_is_recorded(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    node, thread = _node(workspace_id, "Loops")
+    agent = FakeAgent(script=lambda s, t: [asks("edit", "Write notes.md"), TextChunk("done")])
+    seen: list = []
+
+    events = await _answering(_service(data_dir, {agent_id: agent}), account, thread, "go", seen=seen)
+
+    requested = dict(events)["permission.requested"]
+    assert (requested["title"], requested["kind"], requested["rememberable"]) == ("Write notes.md", "edit", True)
+    assert requested["agentRemembers"] is False
+    assert seen[0][0]["nodeTitle"] == "Loops" and seen[0][0]["agentName"] == "Codex"
+    decided = dict(events)["permission.decided"]
+    assert (decided["requestId"], decided["allow"], decided["remembered"]) == (requested["requestId"], True, False)
+    assert agent.answers == [("Write notes.md", "allow")]
+    assert events[-1][1]["outcome"] == "completed"
+    record = next(m for m in _messages(thread) if m.kind == "permission_decision")
+    assert (record.id, record.content, record.outcome) == (decided["messageId"], "Write notes.md", "allowed")
+    assert record.data == {"allow": True, "kind": "edit", "remembered": False}
+
+
+async def test_refusing_is_delivered_recorded_and_the_turn_continues(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node(workspace_id)
+    agent = FakeAgent(script=lambda s, t: [asks("execute", "Run pytest"), TextChunk("ok, I won't")])
+
+    events = await _answering(_service(data_dir, {agent_id: agent}), account, thread, "go", allow=False)
+
+    assert agent.answers == [("Run pytest", "reject")]
+    assert events[-1][1]["outcome"] == "completed"
+    record = next(m for m in _messages(thread) if m.kind == "permission_decision")
+    assert record.outcome == "refused"
+
+
+async def test_reading_inside_the_node_is_not_asked_and_not_recorded(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    node, thread = _node(workspace_id)
+    readme = node_directory(data_dir, node) / "practice" / "README.md"
+    agent = FakeAgent(script=lambda s, t: [asks("read", "Read README.md", (str(readme),))])
+
+    events = await _run(_service(data_dir, {agent_id: agent}), account, thread, "go")
+
+    assert "permission.requested" not in _names(events) and "permission.decided" not in _names(events)
+    assert agent.answers == [("Read README.md", "allow")]
+    assert not any(m.kind == "permission_decision" for m in _messages(thread))
+
+
+@pytest.mark.parametrize(
+    "kind, where",
+    [("edit", "inside"), ("execute", "inside"), ("read", "/etc/hosts")],
+)
+async def test_writing_executing_and_reading_outside_are_asked(account, kind, where):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    node, thread = _node(workspace_id)
+    location = str(node_directory(data_dir, node) / "f") if where == "inside" else where
+    agent = FakeAgent(script=lambda s, t: [asks(kind, f"{kind} f", (location,))])
+
+    events = await _answering(_service(data_dir, {agent_id: agent}), account, thread, "go")
+
+    assert "permission.requested" in _names(events)
+
+
+async def test_a_remembered_decision_answers_in_its_node_on_its_agent_only(account):
+    profile_id, workspace_id, data_dir = account
+    first, second = _register(profile_id, "Codex"), _register(profile_id, "Claude")
+    node, thread = _node(workspace_id)
+    _, other_thread = _node(workspace_id, "Other")
+    script = lambda s, t: [asks("edit", "Write notes.md")]  # noqa: E731
+    agents = {first: FakeAgent(script=script), second: FakeAgent(script=script)}
+    service = _service(data_dir, agents)
+
+    await _answering(service, account, thread, "one", remember=True)
+    again = await _run(service, account, thread, "two")
+    elsewhere = await _answering(service, account, other_thread, "three")
+    with session_scope() as session:
+        session.get(WorkspaceNodeRecord, node).backend_agent_id = second
+    other_agent = await _answering(service, account, thread, "four")
+
+    assert "permission.requested" not in _names(again)
+    assert agents[first].answers[:2] == [("Write notes.md", "allow"), ("Write notes.md", "allow")]
+    assert "permission.requested" in _names(elsewhere)
+    assert "permission.requested" in _names(other_agent)
+
+
+async def test_a_request_is_withdrawn_when_its_turn_is_cancelled(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node(workspace_id)
+    agent = FakeAgent(script=lambda s, t: [asks("edit", "Write notes.md"), TextChunk("never")])
+    service = _service(data_dir, {agent_id: agent})
+
+    events = []
+    async for name, data in service.run_turn(profile_id, workspace_id, thread, "go"):
+        events.append((name, data))
+        if name == "turn.started":
+            turn_id = data["turnId"]
+        if name == "permission.requested":
+            assert len(service.permissions.pending(workspace_id)) == 1
+            await service.cancel(turn_id)
+
+    assert service.permissions.pending(workspace_id) == []
+    assert agent.answers == [("Write notes.md", None)]
+    assert "permission.decided" not in _names(events)
+    assert not any(m.kind == "permission_decision" for m in _messages(thread))
+
+
+async def test_an_abandoned_stream_leaves_nothing_pending(account):
+    profile_id, workspace_id, data_dir = account
+    agent_id = _register(profile_id)
+    _, thread = _node(workspace_id)
+    agent = FakeAgent(script=lambda s, t: [asks("edit", "Write notes.md")])
+    service = _service(data_dir, {agent_id: agent})
+
+    turn = service.run_turn(profile_id, workspace_id, thread, "go")
+    async for name, _ in turn:
+        if name == "permission.requested":
+            break
+    await turn.aclose()
+
+    assert service.permissions.pending(workspace_id) == []
+
+
+# --- The node directory across archiving ------------------------------------
+
+
+def test_archiving_and_restoring_a_node_or_its_project_keeps_its_directory(account):
+    from service import projects
+
+    _, workspace_id, data_dir = account
+    node, _ = _node(workspace_id, "Kept")
+    solution = node_directory(data_dir, node) / "practice" / "ex" / "solution.py"
+    solution.parent.mkdir(parents=True)
+    solution.write_text("print('mine')")
+
+    workspace.archive_node(workspace_id, node)
+    assert solution.read_text() == "print('mine')"
+    workspace.restore_node(workspace_id, node)
+
+    project = next(p["id"] for p in projects.create(workspace_id, "Course")["graph"]["projects"] if p["name"] == "Course")
+    projects.move_node(workspace_id, node, project)
+    projects.archive(workspace_id, project)
+    assert solution.read_text() == "print('mine')"
+    projects.restore(workspace_id, project)
+
+    assert solution.read_text() == "print('mine')"

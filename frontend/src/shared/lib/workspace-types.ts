@@ -56,6 +56,9 @@ export type ChatRole = z.infer<typeof ChatRoleSchema>
  *     nothing delivered (`data`: `{ tool }`)
  *   - `settings_notice`: a session choice the agent no longer offers was not
  *     sent (`content` says which, and why)
+ *   - `permission_decision`: the learner allowed or refused what the agent
+ *     asked (`content` is what it asked, `outcome` `allowed` | `refused`,
+ *     `data`: `{ kind, remembered }`)
  *
  * Defaulted so a snapshot from before agent backends still parses.
  */
@@ -63,6 +66,7 @@ export const MessageKindSchema = z.enum([
   'message',
   'tool',
   'permission_refused',
+  'permission_decision',
   'continuity_seam',
   'practice_delivered',
   'practice_not_delivered',
@@ -85,7 +89,12 @@ export const ChatMessageSchema = z.object({
   content: z.string(),
   createdAt: z.string().datetime(),
   kind: MessageKindSchema.default('message'),
-  outcome: TurnOutcomeSchema.nullable().default(null),
+  /**
+   * A turn's outcome on an agent message. Other kinds reuse the column — a
+   * tool's status, a permission decision's `allowed` | `refused` — so a value
+   * outside the enum reads as `null` rather than failing the whole snapshot.
+   */
+  outcome: TurnOutcomeSchema.nullable().default(null).catch(null),
   /**
    * Structured detail some kinds carry (see `MessageKindSchema`). Absent or
    * `null` otherwise — optional so a snapshot from before it existed, and

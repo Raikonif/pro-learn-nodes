@@ -26,6 +26,7 @@ from core.database import configure_database, database_path, session_scope
 from core.exceptions import NotFoundError, ValidationError
 from core.migrations import migrate_database
 from core.secrets import InMemorySecretStore
+from models.permission import PermissionDecisionRecord
 from models.workspace import (
     ChatMessageRecord,
     ChatThreadRecord,
@@ -95,6 +96,7 @@ _SCOPED_TABLES = (
     SelectionAnchorRecord,
     SourceRecord,
     SourceChunkRecord,
+    PermissionDecisionRecord,
 )
 
 
@@ -176,6 +178,11 @@ def _populate(workspace_id: str) -> None:
                 parent_id=parent.id,
                 child_id=child.id,
                 anchor_id=anchor.id,
+            )
+        )
+        session.add(
+            PermissionDecisionRecord(
+                workspace_id=workspace_id, node_id=parent.id, agent_id="agent-1", kind="edit", allow=True
             )
         )
         source = SourceRecord(workspace_id=workspace_id, title="Notes", content="a passage")
@@ -553,3 +560,36 @@ def test_returning_to_a_profile_provisions_nothing_further(service: ProfileServi
         ).all()
 
     assert [workspace.id for workspace in workspaces] == [workspace_id]
+
+
+# --- The agent directories of an account's nodes ------------------------------
+
+
+def _node_dirs(workspace_id: str) -> list[Path]:
+    from core.database import database_path
+    from service.agent.sessions import node_directory
+
+    with session_scope() as session:
+        ids = session.exec(select(WorkspaceNodeRecord.id).where(WorkspaceNodeRecord.workspace_id == workspace_id)).all()
+    return [node_directory(database_path().parent, node_id) for node_id in ids]
+
+
+def test_removal_deletes_its_nodes_directories_and_nothing_a_link_points_to(service: ProfileService, tmp_path: Path):
+    doomed = service.enroll(LEARNER)
+    kept = service.enroll(OTHER_LEARNER)
+    _populate(_workspace_id_of(doomed.id))
+    _populate(_workspace_id_of(kept.id))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("keep me")
+    doomed_dirs, kept_dirs = _node_dirs(_workspace_id_of(doomed.id)), _node_dirs(_workspace_id_of(kept.id))
+    for directory in doomed_dirs + kept_dirs:
+        (directory / "practice").mkdir(parents=True)
+        (directory / "practice" / "solution.py").write_text("print(1)")
+    (doomed_dirs[0] / "escape").symlink_to(outside)
+
+    service.delete_profile(doomed.id, confirmed=True)
+
+    assert not any(directory.exists() for directory in doomed_dirs)
+    assert all((directory / "practice" / "solution.py").exists() for directory in kept_dirs)
+    assert (outside / "precious.txt").read_text() == "keep me"

@@ -1,8 +1,9 @@
 import type { AgentOption, ModeGroup, ModeOption } from '../settings'
 
 /**
- * How each permission group is introduced in the selector. Learn Nodes refuses
- * every request an agent asks, so a mode that asks is effectively read-only.
+ * How each permission group is introduced in the selector. A mode that asks
+ * presents each request to the learner, who can let the agent act
+ * (acp-agent-permissions); only a request arriving outside any turn is refused.
  */
 export const MODE_GROUP_LABELS: Record<ModeGroup, string> = {
   asks: 'Asks before acting',
@@ -11,7 +12,7 @@ export const MODE_GROUP_LABELS: Record<ModeGroup, string> = {
 }
 
 export const MODE_GROUP_HELP: Record<ModeGroup, string> = {
-  asks: 'Learn Nodes refuses every request the agent asks, so it can read but not change anything.',
+  asks: "The agent asks you before it changes anything or runs a command; reading this session's folder needs no answer.",
   edits: "The agent may edit files in this session's folder without asking.",
   unasked: 'The agent may run commands and change files on your system without asking.',
 }

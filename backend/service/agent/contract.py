@@ -14,6 +14,7 @@ learns which wire it speaks.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +37,10 @@ __all__ = [
     "AgentTimeout",
     "AuthMethod",
     "Negotiation",
+    "PermissionAnswered",
+    "PermissionOption",
     "PermissionRefused",
+    "PermissionRequest",
     "PlanEntry",
     "PlanUpdate",
     "SessionLoadFailed",
@@ -178,15 +182,51 @@ class PlanUpdate:
 
 @dataclass(frozen=True)
 class PermissionRefused:
-    """A permission request answered with a refusal because nothing asked.
+    """A permission request refused because there was nobody to ask.
 
-    Emitted so the refusal is recorded where the learner can see it — the
-    spec's "never silently decided" — until the prompt surface of
-    `acp-agent-permissions-and-branching` exists.
+    Only a request that arrives outside any turn has no conversation to be
+    presented in; inside a turn it is a `PermissionRequest`. Emitted so a
+    refusal is still recorded where the learner can see it — "never
+    silently decided".
     """
 
     title: str
     tool_call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PermissionOption:
+    """One answer the agent offers: `allow_once`, `allow_always`, `reject_once`, `reject_always`."""
+
+    option_id: str
+    name: str | None = None
+    kind: str | None = None
+
+
+@dataclass(frozen=True, eq=False)
+class PermissionRequest:
+    """The agent asks to act, and waits for `decision`.
+
+    Whoever consumes the turn must resolve `decision` exactly once: with the
+    id of one of `options`, or `None` to cancel. The agent does not continue
+    until it is resolved, and it is resolved with `None` when the turn ends
+    first. `locations` are the paths the action names, as the agent gave them.
+    """
+
+    tool_call_id: str | None
+    title: str
+    kind: str | None
+    locations: tuple[str, ...]
+    options: tuple[PermissionOption, ...]
+    decision: asyncio.Future[str | None] = field(repr=False)
+
+
+@dataclass(frozen=True, eq=False)
+class PermissionAnswered:
+    """`request` was answered and the agent has been told; the turn goes on."""
+
+    request: PermissionRequest
+    option_id: str | None
 
 
 @dataclass(frozen=True)
@@ -214,7 +254,16 @@ class TurnEnded:
 
 
 TurnEvent = (
-    TextChunk | ThoughtChunk | ToolActivity | PlanUpdate | PermissionRefused | Usage | ContextUsage | TurnEnded
+    TextChunk
+    | ThoughtChunk
+    | ToolActivity
+    | PlanUpdate
+    | PermissionRequest
+    | PermissionAnswered
+    | PermissionRefused
+    | Usage
+    | ContextUsage
+    | TurnEnded
 )
 
 

@@ -277,19 +277,45 @@ class FakeAgent:
             self.update(session_id, {"sessionUpdate": "usage_update", "used": 100, "size": 1000})
 
         if options.request_permission:
+            cwd = Path(self.sessions[session_id]["cwd"] or ".")
+            kind = options.permission_kind
+            target = options.permission_location or "notes.md"
+            location = target if Path(target).is_absolute() else str(cwd / target)
+            verb = {"read": "Read", "execute": "Run", "edit": "Write"}.get(kind, kind.title())
+            permission_options = (
+                [
+                    {"optionId": "always", "name": "Always allow", "kind": "allow_always"},
+                    {"optionId": "never", "name": "Never", "kind": "reject_always"},
+                ]
+                if options.permission_always_only
+                else [
+                    {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                    {"optionId": "always", "name": "Always allow", "kind": "allow_always"},
+                    {"optionId": "reject", "name": "Reject", "kind": "reject_once"},
+                ]
+            )
             answer = self.request(
                 "session/request_permission",
                 {
                     "sessionId": session_id,
-                    "toolCall": {"toolCallId": "call-perm", "title": "Write notes.md", "kind": "edit", "status": "pending"},
-                    "options": [
-                        {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
-                        {"optionId": "reject", "name": "Reject", "kind": "reject_once"},
-                    ],
+                    "toolCall": {
+                        "toolCallId": "call-perm",
+                        "title": f"{verb} {Path(target).name}",
+                        "kind": kind,
+                        "status": "pending",
+                        "locations": [{"path": location}],
+                    },
+                    "options": permission_options,
                 },
             )
-            outcome = (answer.get("result") or {}).get("outcome", {}).get("outcome")
-            self.update(session_id, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": f"permission {outcome} "}})
+            outcome = (answer.get("result") or {}).get("outcome", {})
+            chosen = outcome.get("optionId")
+            # Allowed to write: act on it, so a test can see the agent acted.
+            if kind == "edit" and chosen in {"allow", "always"}:
+                Path(location).parent.mkdir(parents=True, exist_ok=True)
+                Path(location).write_text("written by the fake agent\n")
+            said = f"permission {outcome.get('outcome')}" + (f" {chosen}" if chosen else "")
+            self.update(session_id, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": f"{said} "}})
 
         if options.unexpected_request:
             answer = self.request("fs/read_text_file", {"sessionId": session_id, "path": "/etc/hosts"})
@@ -432,6 +458,9 @@ def parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--protocol-version", type=int, default=PROTOCOL_VERSION)
     parser.add_argument("--tools", action="store_true", help="emit thought, plan, tool calls")
     parser.add_argument("--request-permission", action="store_true")
+    parser.add_argument("--permission-kind", default="edit", help="the tool kind the request names")
+    parser.add_argument("--permission-location", default=None, help="path it names; relative to the session cwd")
+    parser.add_argument("--permission-always-only", action="store_true", help="offer no once options")
     parser.add_argument("--unexpected-request", action="store_true", help="send fs/read_text_file")
     parser.add_argument("--crash-mid-turn", action="store_true")
     parser.add_argument("--no-load-session", action="store_true")

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 
 import { GraphCanvas, GraphRail, RecentsRail } from '../features/graph-navigation'
-import { NodeConversation, ThreadList, placeInComposer } from '../features/node-chat'
+import { NodeConversation, ThreadList, placeInComposer, useAnyTurnRunning } from '../features/node-chat'
+import { PermissionIndicator } from '../features/permissions'
 import { PracticeRail, useHasExpandedBlock } from '../features/practice'
 import { ProjectDialogHost } from '../features/projects'
 import { CommandPalette } from '../features/command-surface'
@@ -159,6 +160,7 @@ function Workspace() {
   const leftRailStyle = { '--left-rail': `${rendered.left}px` } as CSSProperties
   const rightRailStyle = { '--right-rail': `${rendered.right}px` } as CSSProperties
   const isReady = status === 'ready'
+  const turnRunning = useAnyTurnRunning()
 
   return (
     <div className={`flex h-screen flex-col bg-gray-50 text-gray-900 ${dragging ? 'select-none' : ''}`}>
@@ -168,6 +170,7 @@ function Workspace() {
           <h1 className="text-sm font-semibold tracking-tight">Learn Nodes</h1>
         </div>
         <div className="flex items-center gap-4">
+          {isReady && <PermissionIndicator watching={turnRunning} />}
           <AgentSettingsButton />
           <MemoryButton />
           <AccountAffordance />

@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
 
+import { RememberedPermissions } from '../../permissions'
 import { AgentRegistrationError, type Agent, type AgentPreset } from '../agents-api'
 import { presetFor, useAgentsStore } from '../agents-store'
 
@@ -329,6 +330,8 @@ function AgentSettingsPanel() {
             </ul>
           )}
         </section>
+
+        <RememberedPermissions />
 
         <RegistrationForm />
       </div>

@@ -31,7 +31,28 @@ const EVENT_SCHEMAS = {
   plan: z.object({
     entries: z.array(z.object({ content: z.string(), status: z.string() })),
   }),
+  /** Refused without asking: a request no prompt could present (outside any turn). */
   'permission.refused': z.object({ messageId: z.string().min(1), title: z.string() }),
+  /**
+   * The agent asks the learner (acp-agent-permissions). The turn waits until
+   * it is answered — inline, or from the workspace indicator.
+   */
+  'permission.requested': z.object({
+    requestId: z.string().min(1),
+    toolCallId: nullableString,
+    title: z.string(),
+    kind: nullableString,
+    locations: z.array(z.string()).default([]),
+    rememberable: z.boolean().default(false),
+    agentRemembers: z.boolean().default(false),
+  }),
+  /** The learner's answer, recorded as a `permission_decision` message under `messageId`. */
+  'permission.decided': z.object({
+    requestId: z.string().min(1),
+    messageId: z.string().min(1),
+    allow: z.boolean(),
+    remembered: z.boolean().default(false),
+  }),
   'continuity.seam': z.object({ messageId: z.string().min(1), reason: z.string() }),
   usage: z.object({
     inputTokens: nullableNumber,
@@ -85,6 +106,7 @@ export type PlanEntry = Extract<TurnEvent, { type: 'plan' }>['entries'][number]
 export type TurnUsage = Omit<Extract<TurnEvent, { type: 'usage' }>, 'type'>
 export type SessionState = Omit<Extract<TurnEvent, { type: 'session.state' }>, 'type'>
 export type ContextUsage = Omit<Extract<TurnEvent, { type: 'context.usage' }>, 'type'>
+export type PermissionRequest = Omit<Extract<TurnEvent, { type: 'permission.requested' }>, 'type'>
 
 function isKnown(name: string): name is TurnEventName {
   return Object.prototype.hasOwnProperty.call(EVENT_SCHEMAS, name)
